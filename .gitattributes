@@ -33,8 +33,10 @@ saved_model/**/* filter=lfs diff=lfs merge=lfs -text
 *.zip filter=lfs diff=lfs merge=lfs -text
 *.zst filter=lfs diff=lfs merge=lfs -text
 *tfevents* filter=lfs diff=lfs merge=lfs -text
-LFM2-VL-450M-F16.gguf filter=lfs diff=lfs merge=lfs -text
-LFM2-VL-450M-Q4_0.gguf filter=lfs diff=lfs merge=lfs -text
-LFM2-VL-450M-Q8_0.gguf filter=lfs diff=lfs merge=lfs -text
-mmproj-LFM2-VL-450M-F16.gguf filter=lfs diff=lfs merge=lfs -text
-mmproj-LFM2-VL-450M-Q8_0.gguf filter=lfs diff=lfs merge=lfs -text
+LFM2-1.2B-F16.gguf filter=lfs diff=lfs merge=lfs -text
+LFM2-1.2B-Q4_0.gguf filter=lfs diff=lfs merge=lfs -text
+LFM2-1.2B-Q4_K_M.gguf filter=lfs diff=lfs merge=lfs -text
+LFM2-1.2B-Q5_K_M.gguf filter=lfs diff=lfs merge=lfs -text
+LFM2-1.2B-Q6_K.gguf filter=lfs diff=lfs merge=lfs -text
+LFM2-1.2B-Q8_0.gguf filter=lfs diff=lfs merge=lfs -text
+LFM2-1.2B-Q4_K_M-hip-optimized.gguf filter=lfs diff=lfs merge=lfs -text

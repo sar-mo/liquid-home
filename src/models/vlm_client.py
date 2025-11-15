@@ -1,79 +1,69 @@
-# # src/video_intel/models/vlm_client.py
-# from typing import Any, Dict, List
-# from PIL import Image
-# import torch
-# from transformers import AutoModelForCausalLM, AutoProcessor
+from openai import OpenAI
+import base64
+import glob
+import os
 
-# DEFAULT_VLM_MODEL_ID = "LiquidAI/LFM2-VL-1.6B"
-
-# class VLMClient:
-#     def __init__(self, model_id: str = DEFAULT_VLM_MODEL_ID):
-#         self.model_id = model_id
-#         self.model, self.processor = self._load_model(model_id)
-
-#     def _load_model(self, model_id: str):
-#         model = AutoModelForCausalLM.from_pretrained(
-#             model_id,
-#             device_map="auto",
-#             torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-#         )
-#         processor = AutoProcessor.from_pretrained(model_id)
-#         return model, processor
-
-#     def analyze_frame_pair(
-#         self,
-#         previous_image: Image.Image,
-#         current_image: Image.Image,
-#         semantic_context: str,
-#         max_new_tokens: int = 256,
-#     ) -> str:
-#         prompt_text = f"""...same JSON instruction text as before..."""
-
-#         messages = [
-#             {
-#                 "role": "user",
-#                 "content": [
-#                     {"type": "image"},
-#                     {"type": "image"},
-#                     {"type": "text", "text": prompt_text.strip()},
-#                 ],
-#             }
-#         ]
-
-#         prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
-#         inputs = self.processor(
-#             images=[previous_image, current_image],
-#             text=prompt,
-#             return_tensors="pt",
-#         ).to(self.model.device)
-
-#         with torch.no_grad():
-#             output = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
-
-#         return self.processor.batch_decode(output, skip_special_tokens=True)[0]
-
-from llama_cpp import Llama
-from llama_cpp.llama_chat_format import Llava15ChatHandler
-
-# Initialize with vision support
-chat_handler = Llava15ChatHandler(clip_model_path="models/vlm/mmproj-LFM2-VL-450M-F16.gguf")
-llm = Llama(
-    model_path="models/vlm/LFM2-VL-450M-F16.gguf",
-    chat_handler=chat_handler,
-    n_ctx=4096
+client = OpenAI(
+    base_url="http://localhost:8080/v1",
+    api_key="not-needed",
 )
 
-# Generate with image
-response = llm.create_chat_completion(
+# List of image paths
+image_paths = [
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00001.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00002.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00003.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00004.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00005.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00006.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00007.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00008.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00009.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00010.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00011.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00012.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00013.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00014.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00015.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00016.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00017.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00018.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00019.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00020.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00021.jpg",
+    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00022.jpg",
+]
+
+# Build message content entries for each image
+contents = []
+
+for path in image_paths:
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    contents.append({
+        "type": "image_url",
+        "image_url": {
+            "url": f"data:image/jpeg;base64,{b64}"
+        }
+    })
+
+# Add the final text question AFTER all images
+contents.append({
+    "type": "text",
+    "text": "Describe in detail what is happening across these images. Summarize the sequence."
+})
+
+# Send request
+response = client.chat.completions.create(
+    model="lfm2-vl-450m-f16",
     messages=[
         {
             "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": "file:///path/to/image.jpg"}},
-                {"type": "text", "text": "Describe this image."}
-            ]
+            "content": contents
         }
-    ]
+    ],
+    max_tokens=512,  # a bit more room for multi-frame reasoning
 )
 
-print(response["choices"][0]["message"]["content"])
+print(response.choices[0].message.content)

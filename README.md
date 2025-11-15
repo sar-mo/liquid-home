@@ -4,18 +4,22 @@ license_name: lfm1.0
 license_link: LICENSE
 language:
 - en
-pipeline_tag: image-text-to-text
+- ar
+- zh
+- fr
+- de
+- ja
+- ko
+- es
+pipeline_tag: text-generation
 tags:
-- vision
-- vlm
 - liquid
 - lfm2
-- lfm2-vl
 - edge
 - llama.cpp
 - gguf
 base_model:
-- LiquidAI/LFM2-VL-450M
+- LiquidAI/LFM2-1.2B
 ---
 
 <center>
@@ -54,24 +58,16 @@ base_model:
 </a>
 </center>
 
-# LFM2-VL-450M-GGUF
+# LFM2-1.2B-GGUF
 
-LFM2-VL is a new generation of vision models developed by [Liquid AI](https://www.liquid.ai/), specifically designed for edge AI and on-device deployment. It sets a new standard in terms of quality, speed, and memory efficiency.
+LFM2 is a new generation of hybrid models developed by [Liquid AI](https://www.liquid.ai/), specifically designed for edge AI and on-device deployment. It sets a new standard in terms of quality, speed, and memory efficiency. 
 
-Find more details in the original model card: https://huggingface.co/LiquidAI/LFM2-VL-450M
+Find more details in the original model card: https://huggingface.co/LiquidAI/LFM2-1.2B
 
-## 🏃 How to run LFM2-VL
+## 🏃 How to run LFM2
 
 Example usage with [llama.cpp](https://github.com/ggml-org/llama.cpp):
 
-full precision (F16/F16):
-
 ```
-llama-mtmd-cli -hf LiquidAI/LFM2-VL-450M-GGUF:F16
-```
-
-fastest inference (Q4_0/Q8_0):
-
-```
-llama-mtmd-cli -hf LiquidAI/LFM2-VL-450M-GGUF:Q4_0
+llama-cli -hf LiquidAI/LFM2-1.2B-GGUF
 ```
