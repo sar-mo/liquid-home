@@ -1,0 +1,62 @@
+# uv virtual environment
+.venv/
+.uv/
+
+# uv lock artifacts
+.uv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dylib
+
+# Build directories
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Env files (tokens, secrets)
+.env
+.env.*
+*.env
+
+
+# Models
+models/
+
+# Logs
+logs/
+
+
+# Model weights & checkpoints
+*.ckpt
+*.safetensors
+*.pt
+*.pth
+*.bin
+checkpoint/
+checkpoints/
+runs/
+logs/
+wandb/
+mlruns/
+
+# Datasets
+data/
+datasets/
+
+# Hugging Face cache
+huggingface/
+~/.cache/huggingface/
+
+.vscode/
