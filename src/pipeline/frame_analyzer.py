@@ -1,11 +1,15 @@
 #!/usr/bin/env python
 
+from __future__ import annotations
+
 import argparse
 import time
+from pathlib import Path
 from typing import Iterable, Tuple, List
 
 from src.ingestion.video_stream import load_video_frames_bytes
-from src.models.vlm_client import describe_image_bytes_batch
+from src.models.vlm_client import choose_actions_for_frames
+from src.pipeline.frame_context import AutomationConfig, load_automation_config
 
 
 def make_windows(
@@ -44,6 +48,7 @@ def run_vlm_stream_from_video(
     num_frames_per_second: float,
     num_frames_in_sliding_window: int,
     sliding_window_frame_step_size: int,
+    config: AutomationConfig,
     model: str = "lfm2-vl-450m-f16",
     base_url: str = "http://localhost:8080/v1",
     realtime: bool = True,
@@ -54,9 +59,10 @@ def run_vlm_stream_from_video(
     - Load frames from data/{video_name}.mp4
       (downsampled so we keep about `num_frames_per_second` frames/sec).
     - Slide a fixed-size window of frames across the sequence.
-    - For each window, call the VLM and print the output.
+    - For each window, ask the VLM which actions to trigger given the
+      user-defined rules in `config`.
 
-    Parameters (the only behavior knobs):
+    Parameters (the main behavior knobs):
 
     - num_frames_per_second: how densely we sample the original video in time.
     - num_frames_in_sliding_window: how many frames the model sees at once.
@@ -81,6 +87,7 @@ def run_vlm_stream_from_video(
         f"step size (frames): {sliding_window_frame_step_size}"
     )
     print(f"[INFO] Model = {model} @ {base_url}")
+    print(f"[INFO] Loaded {len(config.actions)} actions and {len(config.rules)} rules.")
 
     # For realtime sleep we map frame step -> seconds step.
     seconds_per_step = sliding_window_frame_step_size / effective_fps
@@ -101,8 +108,9 @@ def run_vlm_stream_from_video(
         )
 
         try:
-            output = describe_image_bytes_batch(
+            decision = choose_actions_for_frames(
                 images=window_images,
+                config=config,
                 start_s=start_s,
                 end_s=end_s,
                 model=model,
@@ -112,8 +120,14 @@ def run_vlm_stream_from_video(
             print(f"[ERROR] VLM call failed on window {i}: {e}")
             break
 
-        print("[MODEL OUTPUT]")
-        print(output)
+        triggered_actions = decision.get("triggered_action_ids", [])
+        triggered_rules = decision.get("triggered_rule_ids", [])
+        reasoning = decision.get("reasoning", "")
+
+        print("[DECISION] triggered_action_ids:", triggered_actions)
+        print("[DECISION] triggered_rule_ids:", triggered_rules)
+        if reasoning:
+            print("[DECISION] reasoning:", reasoning)
 
         if realtime:
             time.sleep(seconds_per_step)
@@ -121,12 +135,12 @@ def run_vlm_stream_from_video(
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Stream MP4 video into VLM using frame-based windows."
+        description="Stream MP4 video into VLM using frame-based windows and automation rules.",
     )
     parser.add_argument(
         "--video-name",
         required=True,
-        help="Base name of MP4 under data (e.g. '15fps-surveillance-video').",
+        help="Base name of MP4 under data (e.g. 'video' for data/video.mp4).",
     )
     parser.add_argument(
         "--num-frames-per-second",
@@ -134,7 +148,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         required=True,
         help=(
             "How many frames to keep per second of video after downsampling. "
-            "Example: 1.0 -> ~1 frame per real second."
+            "Example: 2.0 -> ~2 frames per real second."
         ),
     )
     parser.add_argument(
@@ -148,6 +162,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         required=True,
         help="How many frames to advance between consecutive windows.",
+    )
+    parser.add_argument(
+        "--rules-json",
+        type=str,
+        default="data/context/automation_rules.json",
+        help=(
+            "Path to a JSON file containing 'actions' and 'rules' definitions "
+            "for the home automation engine."
+        ),
     )
     parser.add_argument(
         "--model",
@@ -171,11 +194,15 @@ if __name__ == "__main__":
     parser = _build_arg_parser()
     args = parser.parse_args()
 
+    config_path = Path(args.rules_json).expanduser().resolve()
+    config = load_automation_config(config_path)
+
     run_vlm_stream_from_video(
         video_name=args.video_name,
         num_frames_per_second=args.num_frames_per_second,
         num_frames_in_sliding_window=args.num_frames_in_sliding_window,
         sliding_window_frame_step_size=args.sliding_window_frame_step_size,
+        config=config,
         model=args.model,
         base_url=args.base_url,
         realtime=not args.no_realtime,

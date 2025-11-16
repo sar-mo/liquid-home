@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import List, Optional
 
@@ -16,9 +18,9 @@ def load_video_frames_bytes(
     JPEG-encoded frames as bytes.
 
     - Optionally downscales frames so their width <= max_width.
-    - Optionally *downsamples in time* so we keep about num_frames_per_second
+    - Optionally downsamples in time so we keep about num_frames_per_second
       frames per second of video. For example, a 22-second video with
-      num_frames_per_second=1 will yield ≈22 frames.
+      num_frames_per_second=2 will yield ≈44 frames.
     """
     root = Path(__file__).resolve().parents[2]  # repo root
     video_path = root / "data" / f"{video_name}.mp4"
@@ -32,8 +34,7 @@ def load_video_frames_bytes(
 
     actual_fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
     if actual_fps <= 0:
-        # Fallback if metadata is missing; just treat every frame as if
-        # it were 1 fps for downsampling purposes.
+        # Fallback if metadata is missing; treat as 30fps.
         actual_fps = 30.0
 
     print(f"[INFO] Video file {video_path} reports FPS ≈ {actual_fps:.2f}")
@@ -51,6 +52,7 @@ def load_video_frames_bytes(
             f"(effective ≈ {effective_fps:.2f} fps)."
         )
     else:
+        effective_fps = actual_fps
         print("[INFO] num_frames_per_second not set; keeping all frames.")
 
     frames: List[bytes] = []

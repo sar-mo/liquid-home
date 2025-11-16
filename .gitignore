@@ -60,3 +60,6 @@ huggingface/
 ~/.cache/huggingface/
 
 .vscode/
+
+export_codebase.py
+text.txt

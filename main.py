@@ -1,92 +1,107 @@
 #!/usr/bin/env python3
 """
-Invoice extraction tool that processes bill/invoice images using Large Foundation Models.
-Extracts bill type and amount information and appends to CSV files for expense tracking.
+Liquid Home: Vision-based home automation demo.
+
+This tool:
+
+- Reads a local MP4 video from `data/<video-name>.mp4`
+- Downsamples it to a fixed number of frames per second
+- Slides a fixed-size window of frames over the sequence
+- Sends each window to a vision-language model (VLM)
+- Applies user-defined IF/THEN rules from a JSON file
+- Prints which actions and rules are triggered for each window
+
+Typical usage:
+
+    uv run main.py \
+      --video-name video \
+      --num-frames-per-second 2 \
+      --num-frames-in-sliding-window 4 \
+      --sliding-window-frame-step-size 4 \
+      --rules-json data/context/automation_rules.json
 """
 
 from pathlib import Path
-import time
+import argparse
 
-import click
-from loguru import logger
-from watchdog.observers import Observer
-
-from invoice_parser.invoice_file_handler import InvoiceFileHandler
-from invoice_parser.invoice_processor import InvoiceProcessor
+from src.pipeline.frame_analyzer import run_vlm_stream_from_video
+from src.pipeline.frame_context import load_automation_config
 
 
-def process_existing_files(directory: str, handler: InvoiceFileHandler):
-    """Process any existing image files in the directory."""
-    logger.info(f"Processing existing files in {directory}")
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Liquid Home: stream video into a VLM and trigger automation rules."
+    )
+    parser.add_argument(
+        "--video-name",
+        required=True,
+        help="Base name of MP4 under data/ (e.g. 'video' for data/video.mp4).",
+    )
+    parser.add_argument(
+        "--num-frames-per-second",
+        type=float,
+        default=2.0,
+        help=(
+            "How many frames to keep per second of video after downsampling. "
+            "Example: 2.0 -> ~2 frames per real second."
+        ),
+    )
+    parser.add_argument(
+        "--num-frames-in-sliding-window",
+        type=int,
+        default=4,
+        help="How many frames the model analyzes at a time.",
+    )
+    parser.add_argument(
+        "--sliding-window-frame-step-size",
+        type=int,
+        default=4,
+        help="How many frames to advance between consecutive windows.",
+    )
+    parser.add_argument(
+        "--rules-json",
+        type=str,
+        default="data/context/automation_rules.json",
+        help=(
+            "Path to a JSON file containing 'actions' and 'rules' definitions "
+            "for the home automation engine."
+        ),
+    )
+    parser.add_argument(
+        "--model",
+        default="lfm2-vl-450m-f16",
+        help="Model name exposed by llama-server.",
+    )
+    parser.add_argument(
+        "--base-url",
+        default="http://localhost:8080/v1",
+        help="Base URL for llama-server's OpenAI-compatible endpoint.",
+    )
+    parser.add_argument(
+        "--no-realtime",
+        action="store_true",
+        help="If set, do NOT sleep between windows (process as fast as possible).",
+    )
+    return parser
 
-    for file_path in Path(directory).rglob("*"):
-        if file_path.is_file():
-            file_ext = file_path.suffix.lower()
-            if file_ext in handler.image_extensions:
-                handler.process_invoice(str(file_path))
 
+def main() -> None:
+    parser = _build_arg_parser()
+    args = parser.parse_args()
 
-@click.command()
-@click.option(
-    "--dir",
-    required=True,
-    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
-    help="Directory to watch for invoice images",
-)
-@click.option(
-    "--extractor-model",
-    required=True,
-    help="LFM model name for data extraction (e.g., LFM2-1.2B-Extract)",
-)
-@click.option(
-    "--image-model",
-    required=True,
-    help="LFM vision model name for image processing (e.g., LFM2-VL-3B)",
-)
-@click.option(
-    "--process-existing",
-    is_flag=True,
-    help="Process existing files in the directory on startup",
-)
-def main(
-    dir: Path,
-    extractor_model: str,
-    image_model: str,
-    process_existing: bool,
-):
-    """Invoice extraction tool using Large Foundation Models.
+    rules_path = Path(args.rules_json).expanduser().resolve()
+    config = load_automation_config(rules_path)
 
-    This tool watches a directory for new invoice images, processes them using
-    LFM models to extract bill type and amount, and saves the data to a CSV file.
-    """
-    # Initialize processor and handler
-    processor = InvoiceProcessor(extractor_model, image_model)
-    handler = InvoiceFileHandler(processor, str(dir / 'bills.csv'))
-
-    # Process existing files if requested
-    if process_existing:
-        process_existing_files(str(dir), handler)
-
-    # Set up file watcher
-    observer = Observer()
-    observer.schedule(handler, str(dir), recursive=True)
-
-    logger.info("Starting invoice extraction tool...")
-    logger.info(f"Watching directory: {dir}")
-    logger.info(f"Image processing model: {image_model}")
-    logger.info(f"Extractor model: {extractor_model}")
-
-    observer.start()
-
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        logger.info("Stopping invoice extraction tool...")
-        observer.stop()
-
-    observer.join()
-    logger.info("Invoice extraction tool stopped.")
+    run_vlm_stream_from_video(
+        video_name=args.video_name,
+        num_frames_per_second=args.num_frames_per_second,
+        num_frames_in_sliding_window=args.num_frames_in_sliding_window,
+        sliding_window_frame_step_size=args.sliding_window_frame_step_size,
+        config=config,
+        model=args.model,
+        base_url=args.base_url,
+        realtime=not args.no_realtime,
+    )
 
 
 if __name__ == "__main__":

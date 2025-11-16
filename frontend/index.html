@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Liquid Home – Vision Rules</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Left: User Dashboard -->
+    <section class="panel panel-left">
+      <h1>Home Vision Dashboard</h1>
+
+      <!-- Video Feed -->
+      <div class="card">
+        <h2>Live Camera</h2>
+        <video id="video" autoplay playsinline></video>
+        <div id="video-status" class="status-msg"></div>
+      </div>
+
+      <!-- Rules Builder -->
+      <div class="card">
+        <h2>Automation Rules</h2>
+        <p class="hint">
+          Define up to 5 rules in the form:<br />
+          <strong>IF</strong> (what you want detected) <strong>THEN</strong> (action to run)
+        </p>
+
+        <form id="rule-form">
+          <div class="rule-input-row">
+            <label class="inline-label">IF</label>
+            <input
+              id="condition-input"
+              type="text"
+              placeholder="e.g. Someone enters the room"
+              required
+            />
+          </div>
+
+          <div class="rule-input-row">
+            <label class="inline-label">THEN</label>
+            <select id="action-select" required></select>
+          </div>
+
+          <button type="submit" id="add-rule-btn">Add Rule</button>
+          <div id="rule-error" class="status-msg error-msg"></div>
+        </form>
+
+        <div id="rules-list" class="rules-list"></div>
+      </div>
+    </section>
+
+    <!-- Right: Room Visualization -->
+    <section class="panel panel-right">
+      <h1>Room Visualization (Three.js)</h1>
+
+      <div class="card">
+        <div id="room-canvas-container"></div>
+
+        <div class="section-header">
+          <h2>Test Actions</h2>
+          <p class="hint">
+            These simulate actions being triggered (the backend / VLM will call the same functions).
+          </p>
+        </div>
+
+        <div id="test-buttons">
+          <button data-action-id="turn_lights_on">Turn lights on</button>
+          <button data-action-id="turn_lights_off">Turn lights off</button>
+          <button data-action-id="open_curtain_blinds">Open curtain blinds</button>
+          <button data-action-id="close_curtain_blinds">Close curtain blinds</button>
+        </div>
+
+        <div id="action-status" class="status-msg"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Three.js (global THREE namespace) -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,73 +1,156 @@
----
-license: other
-license_name: lfm1.0
-license_link: LICENSE
-language:
-- en
-- ar
-- zh
-- fr
-- de
-- ja
-- ko
-- es
-pipeline_tag: text-generation
-tags:
-- liquid
-- lfm2
-- edge
-- llama.cpp
-- gguf
-base_model:
-- LiquidAI/LFM2-1.2B
+# Liquid Home – Vision-based Home Automation Demo
+
+This repo is a small end-to-end demo of **vision-based home automation** using a
+Liquid AI vision-language model (VLM) running via `llama.cpp` / `llama-server`.
+
+- **Backend**: Python pipeline that:
+  - Reads an MP4 from `data/<video-name>.mp4`
+  - Downsamples the video to a fixed number of frames per second
+  - Slides a fixed-size window over the frames
+  - Sends each window to a VLM
+  - Applies user-defined `IF <condition> THEN <action>` rules (from JSON)
+- **Frontend**: A simple JS/Three.js UI that:
+  - Shows a **live webcam feed** (MacBook camera)
+  - Lets the user define up to **5 rules** in an `IF / THEN` format
+  - Renders a **3D sample room** (lights + curtains) with Three.js
+  - Executes actions like `turn lights on/off`, `open/close curtains` in the scene
+
 ---
 
-<center>
-<div style="text-align: center;">
-  <img 
-    src="https://cdn-uploads.huggingface.co/production/uploads/61b8e2ba285851687028d395/7_6D7rWrLxp2hb6OHSV1p.png" 
-    alt="Liquid AI"
-    style="width: 100%; max-width: 66%; height: auto; display: inline-block; margin-bottom: 0.5em; margin-top: 0.5em;"
-  />
-</div>
+## Project layout
 
-<a href="https://playground.liquid.ai/chat">
-<svg width="114.8" height="20" viewBox="0 0 1300 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Liquid Playground" style="margin-bottom: 1em;">
-  <title>Liquid: Playground</title>
-  <g>
-    <rect fill="#fff" width="600" height="200"></rect>
-    <rect fill="url(#x)" x="600" width="700" height="200"></rect>
-  </g>
-  <g transform="translate(20, 30) scale(0.4, 0.4)">
-    <path d="M172.314 129.313L172.219 129.367L206.125 188.18C210.671 195.154 213.324 203.457 213.324 212.382C213.324 220.834 210.956 228.739 206.839 235.479L275.924 213.178L167.853 33.6L141.827 76.9614L172.314 129.313Z" fill="black"/>
-    <path d="M114.217 302.4L168.492 257.003C168.447 257.003 168.397 257.003 168.352 257.003C143.515 257.003 123.385 237.027 123.385 212.387C123.385 203.487 126.023 195.204 130.55 188.24L162.621 132.503L135.966 86.7327L60.0762 213.183L114.127 302.4H114.217Z" fill="black"/>
-    <path d="M191.435 250.681C191.435 250.681 191.43 250.681 191.425 250.686L129.71 302.4H221.294L267.71 226.593L191.435 250.686V250.681Z" fill="black"/>
-  </g>
-  <g aria-hidden="true" fill="#fff" text-anchor="start" font-family="Verdana,DejaVu Sans,sans-serif" font-size="110">
-    <text x="200" y="148" textLength="329" fill="#000" opacity="0.1">Liquid</text>
-    <text x="190" y="138" textLength="329" fill="#000">Liquid</text>
-    <text x="655" y="148" textLength="619" fill="#000" opacity="0.1">Playground</text>
-    <text x="645" y="138" textLength="619">Playground</text>
-  </g>
-  
-  <linearGradient id="x" x1="0%" y1="0%" x2="100%" y2="0%">
-    <stop offset="0%" style="stop-color:#000000"></stop>
-    <stop offset="100%" style="stop-color:#000000"></stop>
-  </linearGradient>
-</svg>
-</a>
-</center>
+```text
+.
+├── data
+│   ├── context
+│   │   └── automation_rules.json        # actions + IF/THEN rules JSON
+│   ├── test_data
+│   │   └── cat.jpg
+│   ├── video
+│   └── video.mp4                        # sample video (you can replace this)
+├── frontend
+│   ├── index.html                       # dashboard + Three.js room UI
+│   ├── styles.css                       # styling
+│   └── app.js                           # webcam, rules UI, Three.js scene
+├── models
+│   └── lfm2-vl-450m-f16
+│       ├── LFM2-VL-450M-F16.gguf
+│       └── mmproj-LFM2-VL-450M-F16.gguf
+├── src
+│   ├── api
+│   │   └── server.py                    # (placeholder for future HTTP API)
+│   ├── ingestion
+│   │   ├── frame_store.py               # ffmpeg frame extraction (optional)
+│   │   └── video_stream.py              # loads & downsamples frames from MP4
+│   ├── models
+│   │   ├── text_client.py
+│   │   └── vlm_client.py                # VLM client + rule-aware decision helper
+│   ├── pipeline
+│   │   ├── frame_analyzer.py            # frame windows + automation decisions
+│   │   └── frame_context.py             # AutomationConfig + JSON helpers
+│   └── utils
+│       ├── json_utils.py
+│       └── paths.py
+├── main.py                              # main entrypoint for backend demo
+├── pyproject.toml
+├── uv.lock
+└── README.md
 
-# LFM2-1.2B-GGUF
 
-LFM2 is a new generation of hybrid models developed by [Liquid AI](https://www.liquid.ai/), specifically designed for edge AI and on-device deployment. It sets a new standard in terms of quality, speed, and memory efficiency. 
+## Running full pipeline
 
-Find more details in the original model card: https://huggingface.co/LiquidAI/LFM2-1.2B
 
-## 🏃 How to run LFM2
+### To start the llama server: 
 
-Example usage with [llama.cpp](https://github.com/ggml-org/llama.cpp):
+- To run without downloading the models locally:
 
-```
-llama-cli -hf LiquidAI/LFM2-1.2B-GGUF
-```
+llama-server \
+  -hf LiquidAI/LFM2-VL-450M-GGUF:F16 \
+  -c 16384 \
+  --n-gpu-layers 50 \
+  --threads 8 \
+  --port 8080 \
+  --host 0.0.0.0
+
+
+- If you’ve downloaded the GGUF + projector into models/lfm2-vl-450m-f16/, you can do:
+llama-server \
+  -m models/lfm2-vl-450m-f16/LFM2-VL-450M-F16.gguf \
+  --mmproj models/lfm2-vl-450m-f16/mmproj-LFM2-VL-450M-F16.gguf \
+  -c 16384 \
+  --n-gpu-layers 50 \
+  --threads 8 \
+  --port 8080 \
+  --host 0.0.0.0
+
+
+### Run the backend streaming pipeline
+
+uv run main.py \
+  --video-name video \
+  --num-frames-per-second 2 \
+  --num-frames-in-sliding-window 4 \
+  --sliding-window-frame-step-size 4 \
+  --rules-json data/context/automation_rules.json \
+  --base-url "http://localhost:8080/v1" \
+  --model "lfm2-vl-450m-f16"
+
+This expects:
+
+- Input video at data/video.mp4
+- Rules config at data/context/automation_rules.json
+
+
+
+### Run the frontend (webcam + Three.js room)
+
+From the repo root:
+
+cd frontend
+python -m http.server 8000
+
+
+Then open:
+
+http://localhost:8000/
+
+
+You’ll see:
+
+Left side:
+
+- Live webcam feed from your MacBook camera
+- UI to create up to 5 rules: IF <natural language> THEN <predefined action>
+
+Right side (Three.js):
+- 3D room with:
+    - Ceiling lights (binary ON/OFF)
+    - Window with curtains (binary OPEN/CLOSED)
+- Test buttons that simulate actions:
+    - Turn lights on/off
+    - Open/close curtains
+- Rule items each have a “Run” button that simulates that rule firing
+
+Currently, the frontend actions are local (they call executeAction(actionId, source) in app.js).
+WIP to wire this to your Python backend (e.g., /api/evaluate) to let the VLM drive the same actions.
+
+
+
+
+### How to download / change the models
+
+- To download a new model
+
+
+Example
+
+uvx hf download \
+  LiquidAI/LFM2-VL-3B-GGUF \
+  LFM2-VL-3B-F16.gguf \
+  mmproj-LFM2-VL-3B-F16.gguf \
+  --local-dir models/lfm2-vl-3b-f16
+
+
+- To change the model
+
+
