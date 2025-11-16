@@ -52,7 +52,19 @@ wandb/
 mlruns/
 
 # Datasets
-data/
+
+# Ignore everything in data/
+data/*
+
+
+# Keep the context config file
+!data/context/
+!data/context/automation_rules.json
+
+# Keep the entire test_data/ directory
+!data/test_data/cat.jpg
+
+
 datasets/
 
 # Hugging Face cache
