@@ -88,7 +88,7 @@ Should automatically put the GGUF + projector into your chosen model directory.
 Option A — Run directly from HuggingFace (no local models)
 ```
 llama-server \
-  -hf $MODEL_REPO:$MODEL_NAME \
+  -hf LiquidAI/LFM2-VL-450M-GGUF:F16 \
   -c 16384 \
   --n-gpu-layers 50 \
   --threads 8 \

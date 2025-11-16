@@ -24,13 +24,23 @@
     "rules": [
       {
         "id": "rule-1",
-        "condition_text": "Someone enters the room",
+        "condition_text": "When there are people in the room.",
         "action_id": "turn_lights_on"
       },
       {
         "id": "rule-2",
-        "condition_text": "Someone leaves the room.",
+        "condition_text": "When no people in the room.",
         "action_id": "turn_lights_off"
+      },
+      {
+        "id": "rule-3",
+        "condition_text": "Someone shows thumbs up",
+        "action_id": "open_curtain_blinds"
+      },
+      {
+        "id": "rule-4",
+        "condition_text": "Someone shows thumbs down",
+        "action_id": "close_curtain_blinds"
       }
     ]
   }

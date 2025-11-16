@@ -138,6 +138,8 @@ def run_vlm_stream_from_video(
                 base_url=base_url,
             )
 
+            print(summary)
+
             # Stage 2: text-only rule evaluation.
             if config.rules:
                 decision = evaluate_rules_from_summary(

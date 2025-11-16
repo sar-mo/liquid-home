@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from datetime import datetime
 import json
 import threading
 import time
@@ -17,6 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from src.models.scene_detector import HomeAutomationActionDetector
 from src.pipeline.frame_analyzer import WindowResult
 from src.pipeline.frame_context import (
     load_automation_config,
@@ -98,7 +100,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def create_app(args: argparse.Namespace) -> FastAPI:
+def create_app(args: argparse.Namespace, detector) -> FastAPI:
     app = FastAPI()
 
     # --- Frontend mounting ---
@@ -341,14 +343,36 @@ def create_app(args: argparse.Namespace) -> FastAPI:
                             base_url=args.base_url,
                         )
 
+                        print(summary)
+
                         # 2) Rule evaluation (text-only model)
                         if config.rules:
-                            decision = evaluate_rules_from_summary(
-                                summary=summary,
-                                config=config,
-                                model=policy_model_name,
-                                base_url=args.base_url,
-                            )
+
+                            # Get time of day
+                            current_time = datetime.now()
+                            hour = current_time.hour
+                            if 7 <= hour < 12:
+                                time_of_day = "morning"
+                            elif 12 <= hour < 16:
+                                time_of_day = "afternoon"
+                            elif 16 <= hour < 19:
+                                time_of_day = "evening"
+                            else:
+                                time_of_day = "night"
+
+                            room = "bedroom"
+
+                            print("------- HERE -----------")
+
+                            decision = detector.process_video_summary(summary, config)
+
+                            # decision = evaluate_rules_from_summary(
+                            #     summary=summary,
+                            #     config=config,
+                            #     model=policy_model_name,
+                            #     base_url=args.base_url,
+                            # )
+                            print(decision)
                         else:
                             decision = {
                                 "triggered_rule_ids": [],
@@ -433,7 +457,12 @@ def create_app(args: argparse.Namespace) -> FastAPI:
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
-    app = create_app(args)
+
+    detector = HomeAutomationActionDetector(
+        api_key="no-key-needed",
+    )
+    
+    app = create_app(args, detector)
     uvicorn.run(app, host=args.host, port=args.port)
 
 
