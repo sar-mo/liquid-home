@@ -1,7 +1,7 @@
 # Liquid Home – Vision-based Home Automation Demo
 
 This repo is a small end-to-end demo of **vision-based home automation** using a
-Liquid AI vision-language model (VLM) running via `llama.cpp` / `llama-server`.
+Liquid AI vision-language model (VLM) running via `llama.cpp` / `llama-server`. It is compatible with AMD hardware as well.
 
 - **Backend**: Python pipeline that:
   - Reads an MP4 from `data/<video-name>.mp4`
@@ -144,4 +144,3 @@ Right side:
     - Window with curtains (binary OPEN/CLOSED)
 - Test buttons for manual action simulation
 - Real-time updates when VLM-triggered rules fire.
-
