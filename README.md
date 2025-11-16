@@ -62,18 +62,34 @@ Liquid AI vision-language model (VLM) running via `llama.cpp` / `llama-server`.
 ## Running full pipeline
 
 
-First, set some env variables
+First, set some env variables. should work in zsh + bash
 
 ```
-MODEL_NAME="LFM2-VL-450M-F16"        # or LFM2-VL-3B-F16, etc.
+MODEL_NAME="LFM2-VL-450M-F16"
 MODEL_REPO="LiquidAI/LFM2-VL-450M-GGUF"
-MODEL_DIR="models/${MODEL_NAME,,}"   # e.g., models/lfm2-vl-450m-f16
+
+MODEL_DIR="models/$(echo "$MODEL_NAME" | tr '[:upper:]' '[:lower:]')"
 
 GGUF_FILE="${MODEL_NAME}.gguf"
 MM_PROJ_FILE="mmproj-${MODEL_NAME}.gguf"
+
+echo "$MODEL_DIR"
 ```
 
+### Download models
+
+```
+uvx hf download \
+  $MODEL_REPO \
+  $GGUF_FILE \
+  $MM_PROJ_FILE \
+  --local-dir $MODEL_DIR
+```
+Should automatically put the GGUF + projector into your chosen model directory.
+
 ### To start the llama server: 
+
+
 
 Option A — Run directly from HuggingFace (no local models)
 ```
@@ -129,13 +145,3 @@ Right side:
 - Test buttons for manual action simulation
 - Real-time updates when VLM-triggered rules fire.
 
-### Downloading new models
-
-```
-uvx hf download \
-  $MODEL_REPO \
-  $GGUF_FILE \
-  $MM_PROJ_FILE \
-  --local-dir $MODEL_DIR
-```
-Should automatically put the GGUF + projector into your chosen model directory.
