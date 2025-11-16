@@ -55,7 +55,7 @@ Liquid AI vision-language model (VLM) running via `llama.cpp` / `llama-server`.
 ├── pyproject.toml
 ├── uv.lock
 └── README.md
-
+```
 
 ## Running full pipeline
 
@@ -64,6 +64,8 @@ Liquid AI vision-language model (VLM) running via `llama.cpp` / `llama-server`.
 
 - To run without downloading the models locally:
 
+
+```
 llama-server \
   -hf LiquidAI/LFM2-VL-450M-GGUF:F16 \
   -c 16384 \
@@ -71,9 +73,10 @@ llama-server \
   --threads 8 \
   --port 8080 \
   --host 0.0.0.0
-
+```
 
 - If you’ve downloaded the GGUF + projector into models/lfm2-vl-450m-f16/, you can do:
+```
 llama-server \
   -m models/lfm2-vl-450m-f16/LFM2-VL-450M-F16.gguf \
   --mmproj models/lfm2-vl-450m-f16/mmproj-LFM2-VL-450M-F16.gguf \
@@ -82,33 +85,21 @@ llama-server \
   --threads 8 \
   --port 8080 \
   --host 0.0.0.0
+```
 
+### Run the frontend (webcam + Three.js room) and backend streaming pipeline
 
-### Run the backend streaming pipeline
+From the repo root:
 
-uv run main.py \
-  --video-name video \
+```
+uv run -m src.api.server 
   --num-frames-per-second 2 \
   --num-frames-in-sliding-window 4 \
   --sliding-window-frame-step-size 4 \
   --rules-json data/context/automation_rules.json \
   --base-url "http://localhost:8080/v1" \
-  --model "lfm2-vl-450m-f16"
-
-This expects:
-
-- Input video at data/video.mp4
-- Rules config at data/context/automation_rules.json
-
-
-
-### Run the frontend (webcam + Three.js room)
-
-From the repo root:
-
-cd frontend
-python -m http.server 8000
-
+  --model "lfm2-vl-3b-f16"
+```
 
 Then open:
 
@@ -135,22 +126,42 @@ Currently, the frontend actions are local (they call executeAction(actionId, sou
 WIP to wire this to your Python backend (e.g., /api/evaluate) to let the VLM drive the same actions.
 
 
-
-
-### How to download / change the models
+### How to download
 
 - To download a new model
 
 
 Example
 
+
+```
 uvx hf download \
   LiquidAI/LFM2-VL-3B-GGUF \
   LFM2-VL-3B-F16.gguf \
   mmproj-LFM2-VL-3B-F16.gguf \
   --local-dir models/lfm2-vl-3b-f16
+```
 
 
-- To change the model
+## TODOs
 
 
+0. Connect the frontend and backend:
+
+
+The rules are not being listed on the frontend. 
+  
+  
+Furthermore, the modle is not directly outputting actions that affect the smart home.
+1. Improve model quality
+- try to utilize workbench.liquid.ai, maybe some sort of long-form summarization using a TtT model
+2. Improve the frontend
+- improve the threejs room look
+
+
+3. Write a presentation
+- Draw model architecture
+- Give some context on why this is a good business decision
+- Give some context on why this is perfect for LFMs and SSMs
+- Demo
+- Conclude for future directions

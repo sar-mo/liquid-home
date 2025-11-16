@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Iterable, Tuple, List, Callable, Optional
 
 from src.ingestion.video_stream import load_video_frames_bytes
-from src.models.vlm_client import choose_actions_for_frames
+from src.models.vlm_client import (
+    describe_image_bytes_batch,
+    evaluate_rules_from_summary,
+)
 from src.pipeline.frame_context import AutomationConfig, load_automation_config
 
 
@@ -63,23 +66,19 @@ def run_vlm_stream_from_video(
     config: AutomationConfig,
     model: str = "lfm2-vl-450m-f16",
     base_url: str = "http://localhost:8080/v1",
+    policy_model: Optional[str] = None,
     realtime: bool = True,
     on_window_result: Optional[Callable[[WindowResult], None]] = None,
 ) -> None:
     """
-    High-level streaming pipeline from MP4:
+    High-level streaming pipeline from MP4, now split into two stages:
 
-    - Load frames from data/{video_name}.mp4
-      (downsampled so we keep about `num_frames_per_second` frames/sec).
-    - Slide a fixed-size window of frames across the sequence.
-    - For each window, ask the VLM which actions to trigger given the
-      user-defined rules in `config`.
+    1. Use the VLM purely for *summarization* of each window of frames.
+    2. Use a separate text-only model to evaluate which rules fire, based
+       solely on the summary + rule conditions.
 
-    Parameters (the main behavior knobs):
-
-    - num_frames_per_second: how densely we sample the original video in time.
-    - num_frames_in_sliding_window: how many frames the model sees at once.
-    - sliding_window_frame_step_size: how many frames we advance between windows.
+    This avoids exposing the vision model to any action metadata and keeps
+    the action mapping as a pure Python step.
     """
     frames: List[bytes] = load_video_frames_bytes(
         video_name=video_name,
@@ -90,6 +89,10 @@ def run_vlm_stream_from_video(
     effective_fps = float(num_frames_per_second)
     total_video_seconds = num_frames / effective_fps
 
+    if policy_model is None:
+        # By default, fall back to the same model name; callers can override.
+        policy_model = model
+
     print(f"[INFO] Video '{video_name}'")
     print(
         f"[INFO] Frames decoded after downsampling: {num_frames} "
@@ -99,8 +102,12 @@ def run_vlm_stream_from_video(
         f"[INFO] Window size (frames): {num_frames_in_sliding_window}, "
         f"step size (frames): {sliding_window_frame_step_size}"
     )
-    print(f"[INFO] Model = {model} @ {base_url}")
+    print(f"[INFO] Vision model  = {model} @ {base_url}")
+    print(f"[INFO] Policy model  = {policy_model} @ {base_url}")
     print(f"[INFO] Loaded {len(config.actions)} actions and {len(config.rules)} rules.")
+
+    # Precompute map for fast rule→action lookup.
+    rules_by_id = config.rules_by_id()
 
     # For realtime sleep we map frame step -> seconds step.
     seconds_per_step = sliding_window_frame_step_size / effective_fps
@@ -122,32 +129,58 @@ def run_vlm_stream_from_video(
 
         t0 = time.time()
         try:
-            decision = choose_actions_for_frames(
+            # Stage 1: pure perception (vision-only).
+            summary = describe_image_bytes_batch(
                 images=window_images,
-                config=config,
                 start_s=start_s,
                 end_s=end_s,
                 model=model,
                 base_url=base_url,
             )
+
+            # Stage 2: text-only rule evaluation.
+            if config.rules:
+                decision = evaluate_rules_from_summary(
+                    summary=summary,
+                    config=config,
+                    model=policy_model,
+                    base_url=base_url,
+                )
+            else:
+                decision = {
+                    "triggered_rule_ids": [],
+                    "reasoning": "No rules configured.",
+                    "raw_text": "",
+                }
         except Exception as e:
-            print(f"[ERROR] VLM call failed on window {i}: {e}")
+            print(f"[ERROR] Model call failed on window {i}: {e}")
             break
+
         elapsed = time.time() - t0
 
-        triggered_actions = decision.get("triggered_action_ids", []) or []
-        triggered_rules = decision.get("triggered_rule_ids", []) or []
-        description = (
-            decision.get("description")
-            or decision.get("reasoning")
-            or "No description from model."
-        )
+        triggered_rules: List[str] = decision.get("triggered_rule_ids", []) or []
 
-        print("[DECISION] triggered_action_ids:", triggered_actions)
+        # Map triggered rules → actions locally; the model never sees actions.
+        triggered_action_ids: List[str] = []
+        seen_actions = set()
+        for rule_id in triggered_rules:
+            rule = rules_by_id.get(rule_id)
+            if rule is None:
+                continue
+            action_id = rule.action_id
+            if action_id not in seen_actions:
+                seen_actions.add(action_id)
+                triggered_action_ids.append(action_id)
+
+        reasoning = decision.get("reasoning") or ""
+        description = summary
+
+        print("[SUMMARY]:", description)
         print("[DECISION] triggered_rule_ids:", triggered_rules)
-        if description:
-            print("[DECISION] description:", description)
-        print(f"[DECISION] model latency: {elapsed:.2f}s")
+        print("[DECISION] triggered_action_ids:", triggered_action_ids)
+        if reasoning:
+            print("[DECISION] reasoning:", reasoning)
+        print(f"[DECISION] total latency (vision + policy): {elapsed:.2f}s")
 
         result = WindowResult(
             window_index=i,
@@ -155,7 +188,7 @@ def run_vlm_stream_from_video(
             t_end_sec=end_s,
             description=description,
             delay_seconds=elapsed,
-            triggered_action_ids=list(triggered_actions),
+            triggered_action_ids=list(triggered_action_ids),
             triggered_rule_ids=list(triggered_rules),
         )
 
@@ -208,7 +241,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         default="lfm2-vl-450m-f16",
-        help="Model name exposed by llama-server.",
+        help="Vision model name exposed by llama-server.",
+    )
+    parser.add_argument(
+        "--policy-model",
+        default=None,
+        help=(
+            "Optional text-only model used to evaluate which rules fire.\n"
+            "Defaults to the same as --model if not set."
+        ),
     )
     parser.add_argument(
         "--base-url",
@@ -238,5 +279,6 @@ if __name__ == "__main__":
         config=config,
         model=args.model,
         base_url=args.base_url,
+        policy_model=args.policy_model,
         realtime=not args.no_realtime,
     )

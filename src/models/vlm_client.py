@@ -8,12 +8,15 @@ import json
 
 from openai import OpenAI
 
-from src.pipeline.frame_context import AutomationConfig, automation_config_to_json_blob
+from src.pipeline.frame_context import AutomationConfig
 
 
 def get_vlm_client(base_url: str = "http://localhost:8080/v1") -> OpenAI:
     """
-    Return an OpenAI-compatible client pointing to llama-server.
+    Return an OpenAI-compatible client pointing to llama-server (or any
+    OpenAI-compatible endpoint). We use the same factory for both the
+    vision model and the text-only policy model; which one you get is
+    controlled by the `model` name you pass to `.chat.completions.create`.
     """
     return OpenAI(
         base_url=base_url,
@@ -22,6 +25,9 @@ def get_vlm_client(base_url: str = "http://localhost:8080/v1") -> OpenAI:
 
 
 def _images_to_content_blocks(images: List[bytes]) -> List[Dict[str, Any]]:
+    """
+    Convert raw JPEG bytes into OpenAI chat image_url content blocks.
+    """
     blocks: List[Dict[str, Any]] = []
     for data in images:
         b64 = base64.b64encode(data).decode("utf-8")
@@ -42,27 +48,36 @@ def describe_image_bytes_batch(
     end_s: float,
     model: str = "lfm2-vl-450m-f16",
     base_url: str = "http://localhost:8080/v1",
-    max_tokens: int = 512,
+    max_tokens: int = 256,
 ) -> str:
     """
-    Simple helper: summarize what changed in this segment, without
-    considering home-automation rules. Useful for debugging.
+    Use the *vision* model ONLY for semantic understanding / summarization.
+
+    Given a list of JPEG-encoded frames covering [start_s, end_s], return a
+    short natural-language summary of what *meaningfully* changed. No rules,
+    no actions; this is intentionally "pure perception" to avoid polluting
+    the VLM with home-automation specifics.
     """
+    if not images:
+        return "No frames available in this segment."
+
     client = get_vlm_client(base_url)
 
-    contents = _images_to_content_blocks(images)
+    contents: List[Dict[str, Any]] = _images_to_content_blocks(images)
 
     summary_prompt = (
-        "You are a home automation vision system. "
-        f"These frames come from a video segment between {start_s:.2f}s and {end_s:.2f}s. "
-        "Give a HIGH-LEVEL summary of what changed over this segment; don't analyze small details. "
-        "Focus ONLY on big picture changes, for example:\n"
-        "- Did someone enter or leave?\n"
-        "- Is something unusual?\n"
-        "- Did a door open or close?\n"
-        "Ignore minor details like exact poses, clothing, small objects, or specific furniture. "
-        "If nothing significant changed, just say 'No major changes'. "
-        "Keep it to 1–2 sentences. Your output controls home automation—only report what matters."
+        "You are a home automation *vision* system.\n"
+        f"These frames come from a video segment between {start_s:.2f}s and {end_s:.2f}s.\n\n"
+        "TASK:\n"
+        "- Give a HIGH-LEVEL summary of what changed over this segment.\n"
+        "- Focus ONLY on big picture changes, for example:\n"
+        "  • Did someone enter or leave?\n"
+        "  • Did a door or curtain open/close?\n"
+        "  • Did the overall lighting change dramatically (bright vs dark)?\n"
+        "- Ignore small details (exact pose, clothing, small objects, furniture arrangement).\n"
+        "- If nothing significant changed, just say: 'No major changes.'\n"
+        "- Keep it to 1–2 sentences.\n\n"
+        "IMPORTANT: Do NOT suggest actions or automations. Only describe what you *see*."
     )
 
     contents.append(
@@ -83,77 +98,81 @@ def describe_image_bytes_batch(
         max_tokens=max_tokens,
     )
 
-    return resp.choices[0].message.content
+    text = resp.choices[0].message.content
+    return text if isinstance(text, str) and text.strip() else "No summary returned by model."
 
 
-def choose_actions_for_frames(
-    images: List[bytes],
+def evaluate_rules_from_summary(
+    summary: str,
     config: AutomationConfig,
-    start_s: float,
-    end_s: float,
-    model: str = "lfm2-vl-450m-f16",
+    model: str,
     base_url: str = "http://localhost:8080/v1",
     max_tokens: int = 512,
 ) -> Dict[str, Any]:
     """
-    Given a list of JPEG-encoded image bytes and an AutomationConfig
-    (actions + condition->action rules), ask the VLM which actions
-    should fire for this time window.
+    Given a natural-language `summary` of the scene (from the VLM) and an
+    AutomationConfig containing rules, use a *text-only* model to decide
+    which rules fire.
 
-    Returns a dictionary of the form:
+    CRITICAL: Only the rules are passed to the model (id + condition_text).
+    The model never sees action IDs or action labels. We map rules→actions
+    separately in Python.
 
-    {
-      "triggered_action_ids": [...],
-      "triggered_rule_ids": [...],
-      "reasoning": "...",
-      "raw_text": "..."   # always included, even if JSON parsing fails
-    }
+    Returns:
+        {
+          "triggered_rule_ids": [...],
+          "reasoning": "...",
+          "raw_text": "..."   # always included, even if JSON parsing fails
+        }
     """
     client = get_vlm_client(base_url)
 
-    contents = _images_to_content_blocks(images)
-
-    rules_json = automation_config_to_json_blob(config)
+    # Only expose rule IDs and condition text — no action IDs.
+    rules_payload: Dict[str, Any] = {
+        "rules": [
+            {"id": r.id, "condition_text": r.condition_text}
+            for r in config.rules
+        ]
+    }
+    rules_json = json.dumps(rules_payload, ensure_ascii=False)
 
     control_prompt = (
-        "You are a home automation decision engine that can only decide which predefined "
-        "actions to trigger. You will be given:\n\n"
-        "1. A JSON object describing available actions and user-defined condition->action rules.\n"
-        "2. A short video segment represented as multiple frames.\n\n"
-        "Each rule has:\n"
-        "- an 'id'\n"
-        "- a natural language 'condition_text' describing when it should fire\n"
-        "- an 'action_id' referring to one of the actions\n\n"
-        "Your job is to look at the frames, understand what is happening between the start "
-        "and end times, and then decide which rules' conditions are currently satisfied.\n\n"
-        "IMPORTANT:\n"
-        "- Only trigger actions whose conditions clearly match what you see.\n"
-        "- If you are not confident a condition is met, do NOT trigger that rule.\n"
-        "- Some rules may share the same action_id; if multiple rules fire, the action still "
-        "only appears once in the actions list.\n\n"
-        "Return ONLY a valid JSON object with the following fields:\n"
+        "You are a text-only home automation rule engine.\n\n"
+        "You will be given:\n"
+        "1. A short natural-language SUMMARY describing what is happening in the home.\n"
+        "2. A JSON object listing user-defined rules. Each rule has:\n"
+        "   - 'id': a unique identifier\n"
+        "   - 'condition_text': when this rule should fire, in natural language.\n\n"
+        "Your job is to decide which rules' conditions are clearly satisfied *right now*.\n\n"
+        "Guidelines:\n"
+        "- If you are NOT confident that a condition is satisfied, DO NOT trigger that rule.\n"
+        "- Ignore any references to specific actions (lights, curtains, etc.) in the conditions;\n"
+        "  your output is ONLY about which *rules* are active.\n"
+        "- A rule is 'triggered' if the summary implies its condition is currently true.\n\n"
+        "Return ONLY a valid JSON object with this exact shape:\n"
         "{\n"
-        "  \"triggered_action_ids\": [\"action_id_1\", \"action_id_2\", ...],\n"
-        "  \"triggered_rule_ids\": [\"rule_id_1\", \"rule_id_2\", ...],\n"
-        "  \"reasoning\": \"Short natural language explanation of why you chose those actions.\"\n"
+        '  \"triggered_rule_ids\": [\"rule-id-1\", \"rule-id-2\", ...],\n'
+        '  \"reasoning\": \"Short explanation of why those rules fired (or why none fired).\"\n'
         "}\n\n"
-        "Do not include any markdown, backticks, or extra commentary outside the JSON."
+        "Do not include markdown, backticks, or any extra commentary outside the JSON."
     )
 
-    rules_block = (
-        f"Video time range: {start_s:.2f}s to {end_s:.2f}s.\n\n"
-        f"Automation configuration JSON:\n{rules_json}"
+    user_block = (
+        "SUMMARY:\n"
+        f"{summary.strip() or 'No summary provided.'}\n\n"
+        "RULES_JSON:\n"
+        f"{rules_json}"
     )
-
-    contents.append({"type": "text", "text": control_prompt})
-    contents.append({"type": "text", "text": rules_block})
 
     resp = client.chat.completions.create(
         model=model,
         messages=[
             {
                 "role": "user",
-                "content": contents,
+                "content": [
+                    {"type": "text", "text": control_prompt},
+                    {"type": "text", "text": user_block},
+                ],
             }
         ],
         max_tokens=max_tokens,
@@ -162,7 +181,6 @@ def choose_actions_for_frames(
     raw_text = resp.choices[0].message.content or ""
 
     result: Dict[str, Any] = {
-        "triggered_action_ids": [],
         "triggered_rule_ids": [],
         "reasoning": "",
         "raw_text": raw_text,
@@ -171,20 +189,16 @@ def choose_actions_for_frames(
     try:
         parsed = json.loads(raw_text)
         if isinstance(parsed, dict):
-            for key in ("triggered_action_ids", "triggered_rule_ids", "reasoning"):
-                if key in parsed:
-                    result[key] = parsed[key]
+            # triggered_rule_ids
+            trig = parsed.get("triggered_rule_ids", [])
+            if isinstance(trig, list):
+                result["triggered_rule_ids"] = [str(x) for x in trig]
+            # reasoning
+            if "reasoning" in parsed:
+                result["reasoning"] = str(parsed["reasoning"])
     except Exception:
-        # Leave result with empty lists / reasoning, but keep raw_text
+        # Leave defaults; raw_text is preserved for debugging.
         pass
-
-    # Normalize lists to lists of strings
-    for key in ("triggered_action_ids", "triggered_rule_ids"):
-        value = result.get(key, [])
-        if not isinstance(value, list):
-            result[key] = []
-        else:
-            result[key] = [str(x) for x in value]
 
     if not isinstance(result.get("reasoning"), str):
         result["reasoning"] = str(result.get("reasoning", ""))

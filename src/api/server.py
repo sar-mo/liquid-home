@@ -6,6 +6,7 @@ import base64
 import json
 import threading
 import time
+import uuid
 from collections import deque
 from pathlib import Path
 from queue import Queue, Empty, Full
@@ -17,15 +18,20 @@ from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.pipeline.frame_analyzer import WindowResult
-from src.pipeline.frame_context import load_automation_config
-from src.models.vlm_client import choose_actions_for_frames
+from src.pipeline.frame_context import (
+    load_automation_config,
+    ConditionActionRule,
+)
+from src.models.vlm_client import (
+    describe_image_bytes_batch,
+    evaluate_rules_from_summary,
+)
 
 # Global queue where the frontend pushes live webcam frames (JPEG bytes).
 LIVE_FRAME_QUEUE: "Queue[bytes]" = Queue(maxsize=256)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    # ... (this function remains the same)
     parser = argparse.ArgumentParser(
         description="Liquid Home: serve frontend + stream live video into VLM."
     )
@@ -61,7 +67,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         default="lfm2-vl-450m-f16",
-        help="Model name exposed by llama-server.",
+        help="Vision model name exposed by llama-server.",
+    )
+    parser.add_argument(
+        "--policy-model",
+        default=None,
+        help="Text-only policy model for rule evaluation (defaults to --model).",
     )
     parser.add_argument(
         "--base-url",
@@ -108,51 +119,176 @@ def create_app(args: argparse.Namespace) -> FastAPI:
     rules_path = Path(args.rules_json).expanduser().resolve()
     config = load_automation_config(rules_path)
 
-    # === Live frame ingestion endpoint (YOUR CORRECTED VERSION) =============
-    
+    # Helper for serializing current config to JSON-serializable dict
+    def config_to_dict() -> dict:
+        return {
+            "actions": [
+                {
+                    "id": a.id,
+                    "label": a.label,
+                    "description": a.description,
+                }
+                for a in config.actions
+            ],
+            "rules": [
+                {
+                    "id": r.id,
+                    "condition_text": r.condition_text,
+                    "action_id": r.action_id,
+                }
+                for r in config.rules
+            ],
+        }
+
+    # ===== Config API: frontend <-> backend sync for rules + actions =====
+
+    @app.get("/api/config")
+    async def get_config() -> JSONResponse:
+        """
+        Return the current automation config (actions + rules).
+        Frontend uses this to populate dropdown + rules list.
+        """
+        return JSONResponse(content=config_to_dict())
+
+    @app.post("/api/config/rules")
+    async def create_rule(request: Request) -> JSONResponse:
+        """
+        Add a new rule. Body:
+        {
+          "condition_text": "...",
+          "action_id": "turn_lights_on"
+        }
+        """
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError:
+            return JSONResponse(
+                status_code=400,
+                content={"message": "Invalid JSON payload."},
+            )
+
+        condition_text = payload.get("condition_text")
+        action_id = payload.get("action_id")
+
+        if not isinstance(condition_text, str) or not condition_text.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"message": "condition_text must be a non-empty string."},
+            )
+        if not isinstance(action_id, str) or not action_id.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"message": "action_id must be a non-empty string."},
+            )
+
+        # Ensure the action_id exists in the current actions list
+        if not any(a.id == action_id for a in config.actions):
+            return JSONResponse(
+                status_code=400,
+                content={"message": f"Unknown action_id '{action_id}'."},
+            )
+
+        rule_id = f"rule-{uuid.uuid4().hex[:8]}"
+        new_rule = ConditionActionRule(
+            id=rule_id,
+            condition_text=condition_text.strip(),
+            action_id=action_id.strip(),
+        )
+        config.rules.append(new_rule)
+
+        return JSONResponse(
+            status_code=201,
+            content={
+                "id": new_rule.id,
+                "condition_text": new_rule.condition_text,
+                "action_id": new_rule.action_id,
+            },
+        )
+
+    @app.delete("/api/config/rules/{rule_id}")
+    async def delete_rule(rule_id: str) -> JSONResponse:
+        """
+        Delete a rule by ID.
+        """
+        before = len(config.rules)
+        config.rules = [r for r in config.rules if r.id != rule_id]
+        after = len(config.rules)
+
+        if before == after:
+            return JSONResponse(
+                status_code=404,
+                content={"message": f"No rule found with id '{rule_id}'."},
+            )
+
+        return JSONResponse(content={"status": "deleted", "rule_id": rule_id})
+
+    # === Live frame ingestion endpoint =====================================
+
     @app.post("/api/live_frame")
     async def live_frame(request: Request) -> JSONResponse:
         """
         Accepts a JSON payload with a base64 image, decodes it, and pushes
-        it to a queue for processing. This uses manual parsing for robustness.
+        it to a queue for processing.
         """
         try:
             payload = await request.json()
         except json.JSONDecodeError:
             print("[ERROR] /api/live_frame: Received invalid JSON.")
-            return JSONResponse(status_code=400, content={"message": "Invalid JSON payload."})
+            return JSONResponse(
+                status_code=400,
+                content={"message": "Invalid JSON payload."},
+            )
 
         image_data = payload.get("image_base64")
         if not isinstance(image_data, str):
-            return JSONResponse(status_code=400, content={"message": "Missing 'image_base64' string in payload."})
+            return JSONResponse(
+                status_code=400,
+                content={"message": "Missing 'image_base64' string in payload."},
+            )
 
+        # Strip "data:image/jpeg;base64," prefix if present
         if "," in image_data:
             try:
-                # Strip the "data:image/jpeg;base64," prefix
                 image_data = image_data.split(",", 1)[1]
             except IndexError:
-                 return JSONResponse(status_code=400, content={"message": "Malformed data URL."})
-
+                return JSONResponse(
+                    status_code=400,
+                    content={"message": "Malformed data URL."},
+                )
 
         try:
             img_bytes = base64.b64decode(image_data)
         except (ValueError, TypeError):
-            return JSONResponse(status_code=400, content={"message": "Invalid base64 data."})
+            return JSONResponse(
+                status_code=400,
+                content={"message": "Invalid base64 data."},
+            )
 
         try:
             LIVE_FRAME_QUEUE.put_nowait(img_bytes)
         except Full:
             print("[WARN] /api/live_frame: Frame queue is full. Dropping frame.")
-            return JSONResponse(status_code=503, content={"status": "queue_full"})
+            return JSONResponse(
+                status_code=503,
+                content={"status": "queue_full"},
+            )
 
         return JSONResponse(content={"status": "ok"})
-
 
     # === SSE endpoint reading from LIVE_FRAME_QUEUE =========================
 
     @app.get("/api/stream")
     def stream() -> StreamingResponse:
-        # ... (this function remains the same as your corrected version)
+        """
+        Server-Sent Events endpoint:
+        - Reads frames from LIVE_FRAME_QUEUE
+        - Groups into sliding windows
+        - For each window:
+            1) VLM summarization (vision-only)
+            2) Text-only rule evaluation
+            3) Local rule→action mapping
+        - Emits WindowResult as SSE JSON.
+        """
         q: "Queue[WindowResult | None]" = Queue()
 
         def worker() -> None:
@@ -166,10 +302,15 @@ def create_app(args: argparse.Namespace) -> FastAPI:
             buffer: "deque[bytes]" = deque()
             frames_seen = 0
 
+            policy_model_name = args.policy_model or args.model
+
             print(
                 f"[LIVE] Starting live VLM stream with window_size={window_size}, "
                 f"step={step}, fps={fps}"
             )
+            print(f"[LIVE] Vision model  = {args.model} @ {args.base_url}")
+            print(f"[LIVE] Policy model  = {policy_model_name} @ {args.base_url}")
+            print(f"[LIVE] Current rules = {len(config.rules)}")
 
             while True:
                 try:
@@ -190,44 +331,80 @@ def create_app(args: argparse.Namespace) -> FastAPI:
 
                     try:
                         t0 = time.time()
-                        decision = choose_actions_for_frames(
+
+                        # 1) Vision-only summary
+                        summary = describe_image_bytes_batch(
                             images=window_frames,
-                            config=config,
                             start_s=t_start_sec,
                             end_s=t_end_sec,
                             model=args.model,
                             base_url=args.base_url,
                         )
+
+                        # 2) Rule evaluation (text-only model)
+                        if config.rules:
+                            decision = evaluate_rules_from_summary(
+                                summary=summary,
+                                config=config,
+                                model=policy_model_name,
+                                base_url=args.base_url,
+                            )
+                        else:
+                            decision = {
+                                "triggered_rule_ids": [],
+                                "reasoning": "No rules configured.",
+                                "raw_text": "",
+                            }
+
                         elapsed = time.time() - t0
+
                     except Exception as e:
-                        print(f"[ERROR] VLM call failed on live window {window_index}: {e}")
+                        print(f"[ERROR] Model call failed on live window {window_index}: {e}")
                         q.put(None)
                         return
+
+                    triggered_rules = decision.get("triggered_rule_ids", []) or []
+
+                    # 3) Local mapping rule_id -> action_id
+                    rules_by_id = config.rules_by_id()
+                    triggered_action_ids: list[str] = []
+                    seen_actions: set[str] = set()
+                    for rule_id in triggered_rules:
+                        rule = rules_by_id.get(rule_id)
+                        if rule is None:
+                            continue
+                        action_id = rule.action_id
+                        if action_id not in seen_actions:
+                            seen_actions.add(action_id)
+                            triggered_action_ids.append(action_id)
 
                     result = WindowResult(
                         window_index=window_index,
                         t_start_sec=t_start_sec,
                         t_end_sec=t_end_sec,
-                        description=(
-                            decision.get("description")
-                            or decision.get("reasoning")
-                            or "No description from model."
-                        ),
+                        description=summary,
                         delay_seconds=elapsed,
-                        triggered_action_ids=list(decision.get("triggered_action_ids", [])),
-                        triggered_rule_ids=list(decision.get("triggered_rule_ids", [])),
+                        triggered_action_ids=list(triggered_action_ids),
+                        triggered_rule_ids=list(triggered_rules),
                     )
-                    
-                    print(f"[LIVE WINDOW {result.window_index}] t={result.t_start_sec:.2f}s, actions={result.triggered_action_ids}")
+
+                    print(
+                        f"[LIVE WINDOW {result.window_index}] "
+                        f"t={result.t_start_sec:.2f}s→{result.t_end_sec:.2f}s, "
+                        f"rules={result.triggered_rule_ids}, "
+                        f"actions={result.triggered_action_ids}"
+                    )
 
                     q.put(result)
                     window_index += 1
 
+                    # Slide window
                     for _ in range(step):
                         if buffer:
                             buffer.popleft()
                         else:
                             break
+
             q.put(None)
 
         threading.Thread(target=worker, daemon=True).start()
