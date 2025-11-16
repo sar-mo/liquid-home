@@ -1,11 +1,14 @@
 #!/usr/bin/env python
 
 import argparse
+from datetime import datetime
 import time
 from typing import Iterable, Tuple, List
 
 from src.ingestion.video_stream import load_video_frames_bytes
 from src.models.vlm_client import describe_image_bytes_batch
+from src.models.scene_detector import HomeAutomationActionDetector
+import os
 
 
 def make_windows(
@@ -44,6 +47,7 @@ def run_vlm_stream_from_video(
     num_frames_per_second: float,
     num_frames_in_sliding_window: int,
     sliding_window_frame_step_size: int,
+    room_name: str = "unknown",
     model: str = "lfm2-vl-450m-f16",
     base_url: str = "http://localhost:8080/v1",
     realtime: bool = True,
@@ -55,12 +59,14 @@ def run_vlm_stream_from_video(
       (downsampled so we keep about `num_frames_per_second` frames/sec).
     - Slide a fixed-size window of frames across the sequence.
     - For each window, call the VLM and print the output.
+    - Every 5 seconds of video, aggregate summaries and call home automation detector.
 
     Parameters (the only behavior knobs):
 
     - num_frames_per_second: how densely we sample the original video in time.
     - num_frames_in_sliding_window: how many frames the model sees at once.
     - sliding_window_frame_step_size: how many frames we advance between windows.
+    - room_name: name of the room being monitored (for home automation context).
     """
     frames: List[bytes] = load_video_frames_bytes(
         video_name=video_name,
@@ -81,11 +87,20 @@ def run_vlm_stream_from_video(
         f"step size (frames): {sliding_window_frame_step_size}"
     )
     print(f"[INFO] Model = {model} @ {base_url}")
+    print(f"[INFO] Room = {room_name}")
 
     # For realtime sleep we map frame step -> seconds step.
     seconds_per_step = sliding_window_frame_step_size / effective_fps
 
+    # Initialize home automation detector
+    detector = HomeAutomationActionDetector(
+        api_key=os.getenv("OPENAI_API_KEY", "your-api-key-here")
+    )
+
     outputs = []
+    summaries_buffer = []
+    last_automation_check_time = 0.0
+    AUTOMATION_CHECK_INTERVAL = 10.0  # Check every 5 seconds
 
     for i, (start_idx, end_idx, start_s, end_s) in enumerate(
         make_windows(
@@ -117,9 +132,102 @@ def run_vlm_stream_from_video(
         print("[MODEL OUTPUT]")
         print(output)
         outputs.append(output)
+        
+        # Add summary to buffer with timestamp
+        summaries_buffer.append({
+            "timestamp": end_s,
+            "summary": output
+        })
+
+        # Check if we've accumulated 5 seconds worth of summaries
+        if end_s - last_automation_check_time >= AUTOMATION_CHECK_INTERVAL:
+            print("\n" + "="*60)
+            print(f"[HOME AUTOMATION] Processing summaries from {last_automation_check_time:.2f}s to {end_s:.2f}s")
+            print("="*60)
+            
+            # Combine summaries from the last 5 seconds
+            combined_summary = " ".join([s["summary"] for s in summaries_buffer])
+    
+            # Get time of day
+            current_time = datetime.now()
+            hour = current_time.hour
+            if 7 <= hour < 12:
+                time_of_day = "morning"
+            elif 12 <= hour < 16:
+                time_of_day = "afternoon"
+            elif 16 <= hour < 19:
+                time_of_day = "evening"
+            else:
+                time_of_day = "night"
+            
+            # Call home automation detector
+            try:
+                result = detector.process_video_summary(
+                    room=room_name,
+                    video_summary=combined_summary,
+                    time_of_day=time_of_day
+                )
+                
+                # Display results
+                print(f"\n[SCENE DETECTED]")
+                scene = result.get("scene_input", {})
+                print(f"  Description: {scene.get('scene_description', 'N/A')}")
+                print(f"  Objects: {scene.get('objects_detected', [])}")
+                print(f"  People Count: {scene.get('people_count', 0)}")
+                print(f"  Activities: {scene.get('activities', [])}")
+                
+                print(f"\n[AUTOMATION ACTIONS]")
+                actions = result.get("actions", [])
+                if actions:
+                    for action in actions:
+                        print(f"  → {action['action_type']}: {action.get('target', 'N/A')}")
+                        if action.get('parameters'):
+                            print(f"    Parameters: {action['parameters']}")
+                        print(f"    Priority: {action.get('priority', 'medium')}")
+                else:
+                    print("  No actions recommended")
+                
+                if result.get("unusual_activity_detected"):
+                    print(f"\n⚠️  [ALERT] Unusual Activity Detected!")
+                    print(f"  {result.get('unusual_activity_description', 'N/A')}")
+                
+                print(f"\nConfidence: {result.get('confidence', 0.0):.2f}")
+                
+            except Exception as e:
+                print(f"[ERROR] Home automation detector failed: {e}")
+            
+            # Reset buffer and update last check time
+            summaries_buffer = []
+            last_automation_check_time = end_s
+            print("="*60 + "\n")
 
         if realtime:
             time.sleep(seconds_per_step)
+    
+    # Process any remaining summaries at the end
+    if summaries_buffer:
+        print("\n" + "="*60)
+        print(f"[HOME AUTOMATION] Processing final summaries")
+        print("="*60)
+        
+        combined_summary = " ".join([s["summary"] for s in summaries_buffer])
+        
+        try:
+            result = detector.process_video_summary(
+                room=room_name,
+                video_summary=combined_summary
+            )
+            
+            print(f"\n[FINAL SCENE]")
+            scene = result.get("scene_input", {})
+            print(f"  Description: {scene.get('scene_description', 'N/A')}")
+            print(f"  Actions: {[a['action_type'] for a in result.get('actions', [])]}")
+            
+        except Exception as e:
+            print(f"[ERROR] Home automation detector failed: {e}")
+        
+        print("="*60 + "\n")
+    
     return outputs
 
 
@@ -154,6 +262,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="How many frames to advance between consecutive windows.",
     )
     parser.add_argument(
+        "--room-name",
+        default="unknown",
+        help="Name of the room being monitored (e.g., 'living_room', 'bedroom').",
+    )
+    parser.add_argument(
         "--model",
         default="lfm2-vl-450m-f16",
         help="Model name exposed by llama-server.",
@@ -180,8 +293,10 @@ if __name__ == "__main__":
         num_frames_per_second=args.num_frames_per_second,
         num_frames_in_sliding_window=args.num_frames_in_sliding_window,
         sliding_window_frame_step_size=args.sliding_window_frame_step_size,
+        room_name=args.room_name,
         model=args.model,
         base_url=args.base_url,
         realtime=not args.no_realtime,
     )
-    print(result)
+
+    print(f"\n[INFO] Processed {len(result)} total windows")

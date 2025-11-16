@@ -44,15 +44,11 @@ def describe_image_bytes_batch(
 
     summary_prompt = (
         "You are a home automation vision system. "
-        f"These frames come from a video segment between {start_s:.2f}s and {end_s:.2f}s. "
-        "Give a HIGH-LEVEL summary of what changed over this segment; don't analyze small details. "
-        "Focus ONLY on big picture changes, for example:\n"
-        "- Did someone enter or leave?\n"
-        "- Is something unusual?\n"
-        "- Did a door open or close?\n"
-        "Ignore minor details like exact poses, clothing, small objects, or specific furniture. "
-        "If nothing significant changed, just say 'No major changes'. "
-        "Keep it to 1–2 sentences. Your output controls home automation—only report what matters."
+        "Give a HIGH-LEVEL summary of the scene through images from the security cameras in bedroom; don't analyze small details."
+        "Focus ONLY on big picture changes like suspicious activity, person entering etc"
+        "Ignore minor details like exact poses, clothing, small objects, decorations or specific furniture."
+        "More interested in operating devices, people etc"
+        "Keep it to 1–2 sentences."
     )
 
     contents.append(
