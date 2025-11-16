@@ -69,7 +69,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default="lfm2-vl-450m-f16",
+        default="lfm2-vl-3b-f16",
         help="Model name exposed by llama-server.",
     )
     parser.add_argument(

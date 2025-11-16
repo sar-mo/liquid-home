@@ -19,6 +19,10 @@ const ACTIONS = [
     },
   ];
   
+  // Expected FPS we send to the backend. Keep this in sync with
+  // --num-frames-per-second in src/api/server.py
+  const FRAMES_PER_SECOND = 2;
+  
   // ===== App state =====
   
   let rules = []; // { id, conditionText, actionId }
@@ -29,6 +33,12 @@ const ACTIONS = [
   
   // Three.js state holder
   let threeRoom = null;
+  
+  // SSE + live capture state
+  let eventSource = null;
+  let captureIntervalId = null;
+  let captureCanvas = null;
+  let captureCtx = null;
   
   // ===== DOM refs =====
   
@@ -47,9 +57,17 @@ const ACTIONS = [
   
   const roomCanvasContainer = document.getElementById("room-canvas-container");
   
+  // VLM stream DOM refs
+  const startStreamBtn = document.getElementById("start-stream-btn");
+  const stopStreamBtn = document.getElementById("stop-stream-btn");
+  const streamStatusEl = document.getElementById("stream-status");
+  const streamLogEl = document.getElementById("stream-log");
+  
   // ===== Camera setup =====
   
   async function initCamera() {
+    if (!videoEl || !videoStatusEl) return;
+  
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
@@ -67,6 +85,8 @@ const ACTIONS = [
   // ===== Rules UI =====
   
   function initActionsDropdown() {
+    if (!actionSelectEl) return;
+  
     ACTIONS.forEach((action) => {
       const option = document.createElement("option");
       option.value = action.id;
@@ -76,6 +96,8 @@ const ACTIONS = [
   }
   
   function renderRules() {
+    if (!rulesListEl || !addRuleBtn || !ruleErrorEl) return;
+  
     rulesListEl.innerHTML = "";
   
     if (rules.length === 0) {
@@ -152,6 +174,8 @@ const ACTIONS = [
   // ===== Three.js room =====
   
   function initThreeRoom() {
+    if (!roomCanvasContainer) return;
+  
     const width = roomCanvasContainer.clientWidth || 480;
     const height = width * 0.75;
   
@@ -182,7 +206,7 @@ const ACTIONS = [
     backWall.position.set(0, 2, -3);
     scene.add(backWall);
   
-    // Side walls (optional)
+    // Side walls
     const sideGeom = new THREE.PlaneGeometry(6, 4);
   
     const leftWall = new THREE.Mesh(
@@ -214,7 +238,7 @@ const ACTIONS = [
     windowMesh.position.set(0, 2, -2.99);
     scene.add(windowMesh);
   
-    // Curtain params
+    // Curtains
     const curtainGeom = new THREE.PlaneGeometry(1.7, 2.1);
     const curtainMat = new THREE.MeshStandardMaterial({
       color: 0x111827,
@@ -408,12 +432,16 @@ const ACTIONS = [
       updateRoomUI();
     }
   
-    actionStatusEl.textContent = `[${source}] ${message}`;
+    if (actionStatusEl) {
+      actionStatusEl.textContent = `[${source}] ${message}`;
+    }
   }
   
   // ===== Test buttons =====
   
   function initTestButtons() {
+    if (!testButtonsContainer) return;
+  
     testButtonsContainer.addEventListener("click", (evt) => {
       if (evt.target.tagName !== "BUTTON") return;
       const actionId = evt.target.getAttribute("data-action-id");
@@ -424,31 +452,198 @@ const ACTIONS = [
   
   // ===== Form handler =====
   
-  ruleFormEl.addEventListener("submit", (evt) => {
-    evt.preventDefault();
-    const conditionText = conditionInputEl.value.trim();
-    const actionId = actionSelectEl.value;
+  if (ruleFormEl) {
+    ruleFormEl.addEventListener("submit", (evt) => {
+      evt.preventDefault();
+      const conditionText = conditionInputEl.value.trim();
+      const actionId = actionSelectEl.value;
   
-    if (!conditionText) {
-      ruleErrorEl.textContent = "Condition text cannot be empty.";
-      return;
+      if (!conditionText) {
+        ruleErrorEl.textContent = "Condition text cannot be empty.";
+        return;
+      }
+  
+      if (!actionId) {
+        ruleErrorEl.textContent = "Please select an action.";
+        return;
+      }
+  
+      if (rules.length >= MAX_RULES) {
+        ruleErrorEl.textContent = `Maximum of ${MAX_RULES} rules reached.`;
+        return;
+      }
+  
+      ruleErrorEl.textContent = "";
+      addRule(conditionText, actionId);
+  
+      conditionInputEl.value = "";
+    });
+  }
+  
+  // ===== Live capture helpers =====
+  
+  function ensureCaptureCanvas() {
+    if (!captureCanvas) {
+      captureCanvas = document.createElement("canvas");
+      captureCtx = captureCanvas.getContext("2d");
+    }
+  }
+  
+  function startLiveCapture() {
+    if (captureIntervalId || !videoEl) return;
+    ensureCaptureCanvas();
+  
+    const intervalMs = 1000 / FRAMES_PER_SECOND;
+  
+    const sendFrame = () => {
+      if (!videoEl || videoEl.readyState < 2) return;
+  
+      const vw = videoEl.videoWidth || 640;
+      const vh = videoEl.videoHeight || 360;
+  
+      captureCanvas.width = vw;
+      captureCanvas.height = vh;
+      captureCtx.drawImage(videoEl, 0, 0, vw, vh);
+  
+      const dataUrl = captureCanvas.toDataURL("image/jpeg", 0.7);
+  
+      fetch("/api/live_frame", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_base64: dataUrl }),
+      }).catch((err) => console.error("Failed to send live frame:", err));
+    };
+  
+    // Send one immediately, then at interval.
+    sendFrame();
+    captureIntervalId = setInterval(sendFrame, intervalMs);
+  }
+  
+  function stopLiveCapture() {
+    if (captureIntervalId) {
+      clearInterval(captureIntervalId);
+      captureIntervalId = null;
+    }
+  }
+  
+  // ===== VLM stream (SSE) =====
+  
+  function appendStreamEntry(data) {
+    if (!streamLogEl) return;
+  
+    const {
+      window_index,
+      t_start_sec,
+      t_end_sec,
+      description,
+      delay_seconds,
+      triggered_action_ids,
+      triggered_rule_ids,
+    } = data;
+  
+    const block = document.createElement("div");
+    block.className = "stream-log-item";
+  
+    const headerEl = document.createElement("div");
+    headerEl.className = "stream-log-header";
+    const rangeText = `${t_start_sec.toFixed(2)}s → ${t_end_sec.toFixed(2)}s`;
+    headerEl.textContent = `Window ${window_index} (${rangeText})`;
+    block.appendChild(headerEl);
+  
+    if (description) {
+      const descEl = document.createElement("div");
+      descEl.className = "stream-log-description";
+      descEl.textContent = description;
+      block.appendChild(descEl);
     }
   
-    if (!actionId) {
-      ruleErrorEl.textContent = "Please select an action.";
-      return;
+    const metaLines = [];
+    if (Array.isArray(triggered_action_ids) && triggered_action_ids.length > 0) {
+      metaLines.push(`Actions: ${triggered_action_ids.join(", ")}`);
+    }
+    if (Array.isArray(triggered_rule_ids) && triggered_rule_ids.length > 0) {
+      metaLines.push(`Rules: ${triggered_rule_ids.join(", ")}`);
+    }
+    if (typeof delay_seconds === "number") {
+      metaLines.push(`Model latency: ${delay_seconds.toFixed(2)}s`);
     }
   
-    if (rules.length >= MAX_RULES) {
-      ruleErrorEl.textContent = `Maximum of ${MAX_RULES} rules reached.`;
-      return;
+    if (metaLines.length > 0) {
+      const metaEl = document.createElement("div");
+      metaEl.className = "stream-log-meta";
+      metaEl.textContent = metaLines.join(" • ");
+      block.appendChild(metaEl);
     }
   
-    ruleErrorEl.textContent = "";
-    addRule(conditionText, actionId);
+    // Add newest at the top
+    streamLogEl.prepend(block);
+  }
   
-    conditionInputEl.value = "";
-  });
+  function startStream() {
+    if (!startStreamBtn || !streamStatusEl) return;
+  
+    // Close any existing stream
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+  
+    if (streamLogEl) {
+      streamLogEl.innerHTML = "";
+    }
+    streamStatusEl.textContent = "Starting live VLM stream…";
+  
+    // Start sending webcam frames to backend
+    startLiveCapture();
+  
+    // Open SSE connection
+    eventSource = new EventSource("/api/stream");
+  
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        appendStreamEntry(data);
+        streamStatusEl.textContent = "Streaming live webcam into VLM…";
+      } catch (err) {
+        console.error("Failed to parse SSE message:", err, event.data);
+      }
+    };
+  
+    eventSource.onerror = (err) => {
+      console.error("SSE error:", err);
+      streamStatusEl.textContent = "Stream ended or connection lost.";
+      stopLiveCapture();
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+    };
+  }
+  
+  function stopStream() {
+    if (!stopStreamBtn || !streamStatusEl) return;
+  
+    // Stop webcam frame uploads
+    stopLiveCapture();
+  
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    streamStatusEl.textContent = "Stream stopped.";
+  }
+  
+  function initStreamControls() {
+    if (!startStreamBtn || !stopStreamBtn) return;
+  
+    startStreamBtn.addEventListener("click", () => {
+      startStream();
+    });
+  
+    stopStreamBtn.addEventListener("click", () => {
+      stopStream();
+    });
+  }
   
   // ===== Init =====
   
@@ -459,6 +654,7 @@ const ACTIONS = [
     initThreeRoom();
     renderRules();
     updateRoomUI();
+    initStreamControls();
   }
   
   document.addEventListener("DOMContentLoaded", init);

@@ -4,12 +4,24 @@ from __future__ import annotations
 
 import argparse
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Tuple, List
+from typing import Iterable, Tuple, List, Callable, Optional
 
 from src.ingestion.video_stream import load_video_frames_bytes
 from src.models.vlm_client import choose_actions_for_frames
 from src.pipeline.frame_context import AutomationConfig, load_automation_config
+
+
+@dataclass
+class WindowResult:
+    window_index: int
+    t_start_sec: float
+    t_end_sec: float
+    description: str
+    delay_seconds: float
+    triggered_action_ids: List[str]
+    triggered_rule_ids: List[str]
 
 
 def make_windows(
@@ -52,7 +64,8 @@ def run_vlm_stream_from_video(
     model: str = "lfm2-vl-450m-f16",
     base_url: str = "http://localhost:8080/v1",
     realtime: bool = True,
-):
+    on_window_result: Optional[Callable[[WindowResult], None]] = None,
+) -> None:
     """
     High-level streaming pipeline from MP4:
 
@@ -107,6 +120,7 @@ def run_vlm_stream_from_video(
             f"({start_s:.2f}s → {end_s:.2f}s, {len(window_images)} images)"
         )
 
+        t0 = time.time()
         try:
             decision = choose_actions_for_frames(
                 images=window_images,
@@ -119,15 +133,34 @@ def run_vlm_stream_from_video(
         except Exception as e:
             print(f"[ERROR] VLM call failed on window {i}: {e}")
             break
+        elapsed = time.time() - t0
 
-        triggered_actions = decision.get("triggered_action_ids", [])
-        triggered_rules = decision.get("triggered_rule_ids", [])
-        reasoning = decision.get("reasoning", "")
+        triggered_actions = decision.get("triggered_action_ids", []) or []
+        triggered_rules = decision.get("triggered_rule_ids", []) or []
+        description = (
+            decision.get("description")
+            or decision.get("reasoning")
+            or "No description from model."
+        )
 
         print("[DECISION] triggered_action_ids:", triggered_actions)
         print("[DECISION] triggered_rule_ids:", triggered_rules)
-        if reasoning:
-            print("[DECISION] reasoning:", reasoning)
+        if description:
+            print("[DECISION] description:", description)
+        print(f"[DECISION] model latency: {elapsed:.2f}s")
+
+        result = WindowResult(
+            window_index=i,
+            t_start_sec=start_s,
+            t_end_sec=end_s,
+            description=description,
+            delay_seconds=elapsed,
+            triggered_action_ids=list(triggered_actions),
+            triggered_rule_ids=list(triggered_rules),
+        )
+
+        if on_window_result is not None:
+            on_window_result(result)
 
         if realtime:
             time.sleep(seconds_per_step)
