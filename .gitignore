@@ -74,3 +74,5 @@ huggingface/
 
 export_codebase.py
 text.txt
+
+__pycache__
