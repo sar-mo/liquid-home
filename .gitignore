@@ -56,7 +56,6 @@ mlruns/
 # Ignore everything in data/
 data/*
 
-
 # Keep the context config file
 !data/context/
 !data/context/automation_rules.json

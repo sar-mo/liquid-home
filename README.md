@@ -19,6 +19,8 @@ Liquid AI vision-language model (VLM) running via `llama.cpp` / `llama-server`.
 
 ## Project layout
 
+(Not fully up-to-date)
+
 ```text
 .
 ├── data
@@ -60,14 +62,23 @@ Liquid AI vision-language model (VLM) running via `llama.cpp` / `llama-server`.
 ## Running full pipeline
 
 
-### To start the llama server: 
-
-- To run without downloading the models locally:
-
+First, set some env variables
 
 ```
+MODEL_NAME="LFM2-VL-450M-F16"        # or LFM2-VL-3B-F16, etc.
+MODEL_REPO="LiquidAI/LFM2-VL-450M-GGUF"
+MODEL_DIR="models/${MODEL_NAME,,}"   # e.g., models/lfm2-vl-450m-f16
+
+GGUF_FILE="${MODEL_NAME}.gguf"
+MM_PROJ_FILE="mmproj-${MODEL_NAME}.gguf"
+```
+
+### To start the llama server: 
+
+Option A — Run directly from HuggingFace (no local models)
+```
 llama-server \
-  -hf LiquidAI/LFM2-VL-450M-GGUF:F16 \
+  -hf $MODEL_REPO:$MODEL_NAME \
   -c 16384 \
   --n-gpu-layers 50 \
   --threads 8 \
@@ -75,11 +86,11 @@ llama-server \
   --host 0.0.0.0
 ```
 
-- If you’ve downloaded the GGUF + projector into models/lfm2-vl-450m-f16/, you can do:
+Option B (Preferred) — Run using locally downloaded GGUF + projector
 ```
 llama-server \
-  -m models/lfm2-vl-450m-f16/LFM2-VL-450M-F16.gguf \
-  --mmproj models/lfm2-vl-450m-f16/mmproj-LFM2-VL-450M-F16.gguf \
+  -m $MODEL_DIR/$GGUF_FILE \
+  --mmproj $MODEL_DIR/$MM_PROJ_FILE \
   -c 16384 \
   --n-gpu-layers 50 \
   --threads 8 \
@@ -92,76 +103,39 @@ llama-server \
 From the repo root:
 
 ```
-uv run -m src.api.server 
+uv run -m src.api.server \
   --num-frames-per-second 2 \
   --num-frames-in-sliding-window 4 \
   --sliding-window-frame-step-size 4 \
   --rules-json data/context/automation_rules.json \
   --base-url "http://localhost:8080/v1" \
-  --model "lfm2-vl-3b-f16"
+  --model "$MODEL_NAME"
 ```
 
-Then open:
-
-http://localhost:8000/
+Then open: http://localhost:8000/
 
 
 You’ll see:
 
 Left side:
 
-- Live webcam feed from your MacBook camera
-- UI to create up to 5 rules: IF <natural language> THEN <predefined action>
+- Live webcam feed
+- Rule Editor (up to 5 rules): IF <natural language> THEN <predefined action>
 
-Right side (Three.js):
-- 3D room with:
+Right side:
+- Three.js 3D room with:
     - Ceiling lights (binary ON/OFF)
     - Window with curtains (binary OPEN/CLOSED)
-- Test buttons that simulate actions:
-    - Turn lights on/off
-    - Open/close curtains
-- Rule items each have a “Run” button that simulates that rule firing
+- Test buttons for manual action simulation
+- Real-time updates when VLM-triggered rules fire.
 
-Currently, the frontend actions are local (they call executeAction(actionId, source) in app.js).
-WIP to wire this to your Python backend (e.g., /api/evaluate) to let the VLM drive the same actions.
-
-
-### How to download
-
-- To download a new model
-
-
-Example
-
+### Downloading new models
 
 ```
 uvx hf download \
-  LiquidAI/LFM2-VL-3B-GGUF \
-  LFM2-VL-3B-F16.gguf \
-  mmproj-LFM2-VL-3B-F16.gguf \
-  --local-dir models/lfm2-vl-3b-f16
+  $MODEL_REPO \
+  $GGUF_FILE \
+  $MM_PROJ_FILE \
+  --local-dir $MODEL_DIR
 ```
-
-
-## TODOs
-
-
-0. Connect the frontend and backend:
-
-
-The rules are not being listed on the frontend. 
-  
-  
-Furthermore, the modle is not directly outputting actions that affect the smart home.
-1. Improve model quality
-- try to utilize workbench.liquid.ai, maybe some sort of long-form summarization using a TtT model
-2. Improve the frontend
-- improve the threejs room look
-
-
-3. Write a presentation
-- Draw model architecture
-- Give some context on why this is a good business decision
-- Give some context on why this is perfect for LFMs and SSMs
-- Demo
-- Conclude for future directions
+Should automatically put the GGUF + projector into your chosen model directory.
