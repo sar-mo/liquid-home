@@ -1,69 +1,67 @@
 from openai import OpenAI
 import base64
-import glob
-import os
+from typing import List
 
-client = OpenAI(
-    base_url="http://localhost:8080/v1",
-    api_key="not-needed",
-)
 
-# List of image paths
-image_paths = [
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00001.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00002.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00003.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00004.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00005.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00006.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00007.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00008.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00009.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00010.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00011.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00012.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00013.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00014.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00015.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00016.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00017.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00018.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00019.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00020.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00021.jpg",
-    "/Users/sarthakmohanty/liquid-home/data/15fps-surveillance-video/frames/frame_00022.jpg",
-]
+def get_vlm_client(base_url: str = "http://localhost:8080/v1") -> OpenAI:
+    """
+    Return an OpenAI-compatible client pointing to llama-server.
+    """
+    return OpenAI(
+        base_url=base_url,
+        api_key="not-needed",
+    )
 
-# Build message content entries for each image
-contents = []
 
-for path in image_paths:
-    with open(path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("utf-8")
+def describe_image_bytes_batch(
+    images: List[bytes],
+    start_s: float,
+    end_s: float,
+    model: str = "lfm2-vl-450m-f16",
+    base_url: str = "http://localhost:8080/v1",
+    max_tokens: int = 512,
+) -> str:
+    """
+    Given a list of JPEG-encoded image bytes and the time range they span,
+    call the VLM and return the textual description.
+    """
+    client = get_vlm_client(base_url)
 
-    contents.append({
-        "type": "image_url",
-        "image_url": {
-            "url": f"data:image/jpeg;base64,{b64}"
-        }
-    })
+    contents = []
+    for data in images:
+        b64 = base64.b64encode(data).decode("utf-8")
+        contents.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{b64}",
+                },
+            }
+        )
 
-# Add the final text question AFTER all images
-contents.append({
-    "type": "text",
-    "text": "Describe in detail what is happening across these images. Summarize the sequence."
-})
-
-# Send request
-response = client.chat.completions.create(
-    model="lfm2-vl-450m-f16",
-    messages=[
+    contents.append(
         {
-            "role": "user",
-            "content": contents
+            "type": "text",
+            "text": (
+                "You are watching a short segment of a surveillance-style video. "
+                f"This segment covers approximately {end_s - start_s:.1f} seconds "
+                f"from time {start_s:.1f}s to {end_s:.1f}s in the video.\n\n"
+                "Describe in detail what is happening across these images. "
+                "Summarize the sequence over time, including any changes, "
+                "movements, and interactions you observe."
+            ),
         }
-    ],
-    max_tokens=512,  # a bit more room for multi-frame reasoning
-)
+    )
 
-print(response.choices[0].message.content)
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": contents,
+            }
+        ],
+        max_tokens=max_tokens,
+    )
+
+    return resp.choices[0].message.content
