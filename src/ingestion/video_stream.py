@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 from pathlib import Path
 from typing import List, Optional
 
@@ -7,16 +9,19 @@ import cv2
 def load_video_frames_bytes(
     video_name: str,
     max_width: Optional[int] = 640,
+    num_frames_per_second: Optional[float] = None,
 ) -> List[bytes]:
     """
-    Load an MP4 from data/test_data/{video_name}.mp4 and return a list of
+    Load an MP4 from data/{video_name}.mp4 and return a list of
     JPEG-encoded frames as bytes.
 
     - Optionally downscales frames so their width <= max_width.
-    - Prints the actual FPS of the video for debugging.
+    - Optionally *downsamples in time* so we keep about num_frames_per_second
+      frames per second of video. For example, a 22-second video with
+      num_frames_per_second=1 will yield ≈22 frames.
     """
     root = Path(__file__).resolve().parents[2]  # repo root
-    video_path = root / "data" / "test_data" / f"{video_name}.mp4"
+    video_path = root / "data" / f"{video_name}.mp4"
 
     if not video_path.exists():
         raise FileNotFoundError(f"Video not found: {video_path}")
@@ -25,18 +30,43 @@ def load_video_frames_bytes(
     if not cap.isOpened():
         raise RuntimeError(f"Failed to open video: {video_path}")
 
-    actual_fps = cap.get(cv2.CAP_PROP_FPS)
+    actual_fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+    if actual_fps <= 0:
+        # Fallback if metadata is missing; just treat every frame as if
+        # it were 1 fps for downsampling purposes.
+        actual_fps = 30.0
+
     print(f"[INFO] Video file {video_path} reports FPS ≈ {actual_fps:.2f}")
 
+    keep_every_n = 1
+    if num_frames_per_second is not None:
+        if num_frames_per_second <= 0:
+            raise ValueError("num_frames_per_second must be > 0")
+        # Keep roughly num_frames_per_second frames per second.
+        keep_every_n = max(1, int(round(actual_fps / num_frames_per_second)))
+        effective_fps = actual_fps / keep_every_n
+        print(
+            f"[INFO] Target ~{num_frames_per_second:.2f} frames/sec; "
+            f"keeping 1 of every {keep_every_n} frames "
+            f"(effective ≈ {effective_fps:.2f} fps)."
+        )
+    else:
+        print("[INFO] num_frames_per_second not set; keeping all frames.")
+
     frames: List[bytes] = []
-    idx = 0
+    frame_idx = 0
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Optional downscale to reduce memory / VLM load
+        # Only keep frames according to temporal downsampling rule.
+        if frame_idx % keep_every_n != 0:
+            frame_idx += 1
+            continue
+
+        # Optional downscale to reduce memory / VLM load.
         if max_width is not None:
             h, w = frame.shape[:2]
             if w > max_width:
@@ -47,12 +77,12 @@ def load_video_frames_bytes(
 
         ok, buffer = cv2.imencode(".jpg", frame)
         if not ok:
-            print(f"[WARN] Failed to encode frame {idx}, skipping")
-            idx += 1
+            print(f"[WARN] Failed to encode frame {frame_idx}, skipping")
+            frame_idx += 1
             continue
 
         frames.append(buffer.tobytes())
-        idx += 1
+        frame_idx += 1
 
     cap.release()
 

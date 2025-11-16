@@ -1,9 +1,41 @@
 #!/usr/bin/env python3
 
+## src/ingestion/frame_store.py
+
 import argparse
 import subprocess
 from pathlib import Path
 import sys
+
+
+
+from pathlib import Path
+from typing import List
+
+
+def list_test_video_frames(video_name: str) -> List[str]:
+    """
+    Given a logical video name (e.g. '15fps-surveillance-video'), return a
+    sorted list of absolute frame paths from:
+
+        data/{video_name}/frames/*.jpg
+    """
+    root = Path(__file__).resolve().parents[2]  # go from src/ingestion/... -> repo root
+    frames_dir = root / "data" / video_name / "frames"
+
+    if not frames_dir.exists():
+        raise FileNotFoundError(f"Frames directory does not exist: {frames_dir}")
+
+    # Adjust extension(s) if you later use .png or others.
+    paths = sorted(frames_dir.glob("*.jpg"))
+
+    if not paths:
+        raise FileNotFoundError(f"No .jpg frames found in {frames_dir}")
+
+    # Return as strings for easier JSON/logging later
+    return [str(p) for p in paths]
+
+
 
 
 def extract_frames(input_video: Path, output_root: Path, fps: int = 1) -> Path:

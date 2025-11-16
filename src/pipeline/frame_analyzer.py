@@ -1,115 +1,103 @@
-import os
-import sys
+#!/usr/bin/env python
+
 import argparse
 import time
 from typing import Iterable, Tuple, List
-
-# # ---------------------------------------------------------------------
-# # Make sure we can import `src.*` even when running this file directly:
-# #   uv run src/pipeline/frame_analyzer.py ...
-# # ---------------------------------------------------------------------
-# ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-# if ROOT not in sys.path:
-#     sys.path.insert(0, ROOT)
 
 from src.ingestion.video_stream import load_video_frames_bytes
 from src.models.vlm_client import describe_image_bytes_batch
 
 
-def select_window_images(
-    frames: List[bytes],
-    start_idx: int,
-    end_idx: int,
-    max_images: int,
-) -> List[bytes]:
-    """
-    From frames[start_idx:end_idx], pick at most `max_images` frames.
-
-    If the window has <= max_images frames, return all of them.
-    Otherwise, sample approximately uniformly across the window.
-    """
-    slice_frames = frames[start_idx:end_idx]
-    n = len(slice_frames)
-    if n <= max_images:
-        return slice_frames
-
-    # uniform sampling of indices in [0, n)
-    step = n / float(max_images)
-    indices = [int(i * step) for i in range(max_images)]
-    return [slice_frames[i] for i in indices]
-
-
-
 def make_windows(
     num_frames: int,
-    fps: float,
-    window_seconds: float,
-    step_seconds: float,
+    frames_per_second: float,
+    num_frames_in_sliding_window: int,
+    sliding_window_frame_step_size: int,
 ) -> Iterable[Tuple[int, int, float, float]]:
     """
     Yield (start_idx, end_idx, start_time_s, end_time_s) for each window.
 
-    - Every `step_seconds` (t), we take a window of length `window_seconds` (k).
-    - Frames indices follow Python slice semantics: [start_idx, end_idx)
-    """
-    window_size = int(round(window_seconds * fps))
-    step_size = int(round(step_seconds * fps))
+    Windows are defined in *frames*:
 
-    if window_size <= 0:
-        raise ValueError("window_seconds is too small for the given fps")
-    if step_size <= 0:
-        raise ValueError("step_seconds is too small for the given fps")
+    - Each window contains `num_frames_in_sliding_window` frames.
+    - Consecutive windows start `sliding_window_frame_step_size` frames apart.
+    - Time is derived from frames_per_second (the *downsampled* effective fps).
+    """
+    if num_frames_in_sliding_window <= 0:
+        raise ValueError("num_frames_in_sliding_window must be > 0")
+    if sliding_window_frame_step_size <= 0:
+        raise ValueError("sliding_window_frame_step_size must be > 0")
+    if frames_per_second <= 0:
+        raise ValueError("frames_per_second must be > 0")
 
     start = 0
-    while start + window_size <= num_frames:
-        end = start + window_size
-        start_time_s = start / fps
-        end_time_s = end / fps
+    while start + num_frames_in_sliding_window <= num_frames:
+        end = start + num_frames_in_sliding_window
+        start_time_s = start / frames_per_second
+        end_time_s = end / frames_per_second
         yield start, end, start_time_s, end_time_s
-        start += step_size
+        start += sliding_window_frame_step_size
+
 
 def run_vlm_stream_from_video(
     video_name: str,
-    fps: float,
-    window_seconds: float,
-    step_seconds: float,
+    num_frames_per_second: float,
+    num_frames_in_sliding_window: int,
+    sliding_window_frame_step_size: int,
     model: str = "lfm2-vl-450m-f16",
     base_url: str = "http://localhost:8080/v1",
     realtime: bool = True,
-    max_images_per_window: int = 16,
 ):
     """
     High-level streaming pipeline from MP4:
-    - Load frames from data/test_data/{video_name}.mp4
-    - For each window [k seconds], call VLM
-    - Print the output every t seconds
+
+    - Load frames from data/{video_name}.mp4
+      (downsampled so we keep about `num_frames_per_second` frames/sec).
+    - Slide a fixed-size window of frames across the sequence.
+    - For each window, call the VLM and print the output.
+
+    Parameters (the only behavior knobs):
+
+    - num_frames_per_second: how densely we sample the original video in time.
+    - num_frames_in_sliding_window: how many frames the model sees at once.
+    - sliding_window_frame_step_size: how many frames we advance between windows.
     """
-    frames: List[bytes] = load_video_frames_bytes(video_name)
+    frames: List[bytes] = load_video_frames_bytes(
+        video_name=video_name,
+        num_frames_per_second=num_frames_per_second,
+    )
+
     num_frames = len(frames)
-    total_video_seconds = num_frames / fps
+    effective_fps = float(num_frames_per_second)
+    total_video_seconds = num_frames / effective_fps
 
     print(f"[INFO] Video '{video_name}'")
-    print(f"[INFO] Frames decoded: {num_frames} (≈ {total_video_seconds:.2f}s at {fps} fps)")
     print(
-        f"[INFO] Window = {window_seconds:.2f}s, step = {step_seconds:.2f}s "
-        f"({int(round(window_seconds * fps))} frames/window before subsampling)"
+        f"[INFO] Frames decoded after downsampling: {num_frames} "
+        f"(≈ {total_video_seconds:.2f}s at {effective_fps:.2f} fps)"
     )
-    print(f"[INFO] Max images per window: {max_images_per_window}")
+    print(
+        f"[INFO] Window size (frames): {num_frames_in_sliding_window}, "
+        f"step size (frames): {sliding_window_frame_step_size}"
+    )
     print(f"[INFO] Model = {model} @ {base_url}")
 
+    # For realtime sleep we map frame step -> seconds step.
+    seconds_per_step = sliding_window_frame_step_size / effective_fps
+
     for i, (start_idx, end_idx, start_s, end_s) in enumerate(
-        make_windows(num_frames, fps, window_seconds, step_seconds)
-    ):
-        window_images = select_window_images(
-            frames=frames,
-            start_idx=start_idx,
-            end_idx=end_idx,
-            max_images=max_images_per_window,
+        make_windows(
+            num_frames=num_frames,
+            frames_per_second=effective_fps,
+            num_frames_in_sliding_window=num_frames_in_sliding_window,
+            sliding_window_frame_step_size=sliding_window_frame_step_size,
         )
+    ):
+        window_images = frames[start_idx:end_idx]
 
         print(
             f"\n[WINDOW {i}] frames {start_idx}–{end_idx - 1} "
-            f"({start_s:.2f}s → {end_s:.2f}s, {len(window_images)} images after subsampling)"
+            f"({start_s:.2f}s → {end_s:.2f}s, {len(window_images)} images)"
         )
 
         try:
@@ -128,35 +116,38 @@ def run_vlm_stream_from_video(
         print(output)
 
         if realtime:
-            time.sleep(step_seconds)
+            time.sleep(seconds_per_step)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Stream MP4 video into VLM in fixed time windows."
+        description="Stream MP4 video into VLM using frame-based windows."
     )
     parser.add_argument(
         "--video-name",
         required=True,
-        help="Base name of MP4 under data/test_data (e.g. '15fps-surveillance-video').",
+        help="Base name of MP4 under data (e.g. '15fps-surveillance-video').",
     )
     parser.add_argument(
-        "--fps",
+        "--num-frames-per-second",
         type=float,
         required=True,
-        help="Frames per second of the video (f). Used for timing/windowing.",
+        help=(
+            "How many frames to keep per second of video after downsampling. "
+            "Example: 1.0 -> ~1 frame per real second."
+        ),
     )
     parser.add_argument(
-        "--window-seconds",
-        type=float,
+        "--num-frames-in-sliding-window",
+        type=int,
         required=True,
-        help="Length of each chunk in seconds (k).",
+        help="How many frames the model analyzes at a time.",
     )
     parser.add_argument(
-        "--step-seconds",
-        type=float,
+        "--sliding-window-frame-step-size",
+        type=int,
         required=True,
-        help="How often to send a chunk in seconds (t).",
+        help="How many frames to advance between consecutive windows.",
     )
     parser.add_argument(
         "--model",
@@ -173,12 +164,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="If set, do NOT sleep between windows (process as fast as possible).",
     )
-    parser.add_argument(
-        "--max-images-per-window",
-        type=int,
-        default=16,
-        help="Maximum number of frames to send to the VLM per window.",
-    )
     return parser
 
 
@@ -188,11 +173,10 @@ if __name__ == "__main__":
 
     run_vlm_stream_from_video(
         video_name=args.video_name,
-        fps=args.fps,
-        window_seconds=args.window_seconds,
-        step_seconds=args.step_seconds,
+        num_frames_per_second=args.num_frames_per_second,
+        num_frames_in_sliding_window=args.num_frames_in_sliding_window,
+        sliding_window_frame_step_size=args.sliding_window_frame_step_size,
         model=args.model,
         base_url=args.base_url,
         realtime=not args.no_realtime,
-        max_images_per_window=args.max_images_per_window,
     )

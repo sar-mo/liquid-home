@@ -1,6 +1,9 @@
-from openai import OpenAI
-import base64
+#!/usr/bin/env python
+
 from typing import List
+import base64
+
+from openai import OpenAI
 
 
 def get_vlm_client(base_url: str = "http://localhost:8080/v1") -> OpenAI:
@@ -39,17 +42,23 @@ def describe_image_bytes_batch(
             }
         )
 
+    summary_prompt = (
+        "You are a home automation vision system. "
+        f"These frames come from a video segment between {start_s:.2f}s and {end_s:.2f}s. "
+        "Give a HIGH-LEVEL summary of what changed over this segment; don't analyze small details. "
+        "Focus ONLY on big picture changes, for example:\n"
+        "- Did someone enter or leave?\n"
+        "- Is something unusual?\n"
+        "- Did a door open or close?\n"
+        "Ignore minor details like exact poses, clothing, small objects, or specific furniture. "
+        "If nothing significant changed, just say 'No major changes'. "
+        "Keep it to 1–2 sentences. Your output controls home automation—only report what matters."
+    )
+
     contents.append(
         {
             "type": "text",
-            "text": (
-                "You are watching a short segment of a surveillance-style video. "
-                f"This segment covers approximately {end_s - start_s:.1f} seconds "
-                f"from time {start_s:.1f}s to {end_s:.1f}s in the video.\n\n"
-                "Describe in detail what is happening across these images. "
-                "Summarize the sequence over time, including any changes, "
-                "movements, and interactions you observe."
-            ),
+            "text": summary_prompt,
         }
     )
 
