@@ -1,33 +1,19 @@
-import argparse
-import time
-from typing import Iterable, Tuple, List
-
-from src.ingestion.video_stream import load_video_frames_bytes
-from src.models.vlm_client import describe_image_bytes_batch
-
-
-from typing import Iterable, Tuple, List
-import argparse
-import time
-
-
 import os
-
 import sys
+import argparse
+import time
+from typing import Iterable, Tuple, List
 
-
-
-# ---------------------------------------------------------------------
-# Make sure we can import `src.*` even when running this file directly:
-#   uv run src/pipeline/frame_analyzer.py ...
-# ---------------------------------------------------------------------
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+# # ---------------------------------------------------------------------
+# # Make sure we can import `src.*` even when running this file directly:
+# #   uv run src/pipeline/frame_analyzer.py ...
+# # ---------------------------------------------------------------------
+# ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+# if ROOT not in sys.path:
+#     sys.path.insert(0, ROOT)
 
 from src.ingestion.video_stream import load_video_frames_bytes
 from src.models.vlm_client import describe_image_bytes_batch
-
 
 
 def select_window_images(
