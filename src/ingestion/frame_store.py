@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
+"""
+Utilities for working with extracted frame folders on disk.
 
-## src/ingestion/frame_store.py
-
-import argparse
-import subprocess
-from pathlib import Path
-import sys
-
-
+This module is mostly for tests / experiments. The main streaming pipeline
+does not depend on it.
+"""
 
 from pathlib import Path
 from typing import List
+import subprocess
 
 
 def list_test_video_frames(video_name: str) -> List[str]:
@@ -26,26 +24,24 @@ def list_test_video_frames(video_name: str) -> List[str]:
     if not frames_dir.exists():
         raise FileNotFoundError(f"Frames directory does not exist: {frames_dir}")
 
-    # Adjust extension(s) if you later use .png or others.
     paths = sorted(frames_dir.glob("*.jpg"))
-
     if not paths:
         raise FileNotFoundError(f"No .jpg frames found in {frames_dir}")
 
-    # Return as strings for easier JSON/logging later
     return [str(p) for p in paths]
 
 
-
-
-def extract_frames(input_video: Path, output_root: Path, fps: int = 1) -> Path:
+def extract_frames(
+    input_video: Path,
+    output_root: Path,
+    num_frames_per_second: int = 1,
+) -> Path:
     """
-    Extract frames from the input video at the given FPS and save them
-    into a structured directory:
+    Extract frames from the input video at a fixed rate and save them into:
 
         output_root / <video_stem> / frames / frame_00001.jpg, ...
 
-    Returns the path to the frames directory.
+    num_frames_per_second: how many frames to keep per second of video.
     """
     if not input_video.exists():
         raise FileNotFoundError(f"Input video does not exist: {input_video}")
@@ -54,18 +50,16 @@ def extract_frames(input_video: Path, output_root: Path, fps: int = 1) -> Path:
     frames_dir = output_root / video_stem / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
-    # Output pattern: frame_00001.jpg, frame_00002.jpg, ...
     output_pattern = str(frames_dir / "frame_%05d.jpg")
 
-    # ffmpeg command: 1 frame per second
     cmd = [
         "ffmpeg",
         "-i",
         str(input_video),
         "-vf",
-        f"fps={fps}",
+        f"fps={num_frames_per_second}",
         "-qscale:v",
-        "2",  # quality (lower is better; 2 is usually visually good)
+        "2",
         output_pattern,
     ]
 
@@ -80,42 +74,3 @@ def extract_frames(input_video: Path, output_root: Path, fps: int = 1) -> Path:
         raise RuntimeError(f"ffmpeg failed with exit code {e.returncode}") from e
 
     return frames_dir
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Extract one image per second from an MP4 into a structured directory."
-    )
-    parser.add_argument(
-        "input_video",
-        type=str,
-        help="Path to the input .mp4 video file",
-    )
-    parser.add_argument(
-        "output_root",
-        type=str,
-        help="Root directory where extracted frames will be stored",
-    )
-    parser.add_argument(
-        "--fps",
-        type=int,
-        default=1,
-        help="Frames per second to extract (default: 1)",
-    )
-
-    args = parser.parse_args()
-
-    input_video = Path(args.input_video).expanduser().resolve()
-    output_root = Path(args.output_root).expanduser().resolve()
-
-    try:
-        frames_dir = extract_frames(input_video, output_root, fps=args.fps)
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Frames saved in: {frames_dir}")
-
-
-if __name__ == "__main__":
-    main()

@@ -18,8 +18,7 @@ Liquid AI vision-language model (VLM) running via `llama.cpp` / `llama-server`. 
 ---
 
 ## Project layout
-
-(Not fully up-to-date)
+(May not be fully up-to-date)
 
 ```text
 .
@@ -60,8 +59,6 @@ Liquid AI vision-language model (VLM) running via `llama.cpp` / `llama-server`. 
 ```
 
 ## Running full pipeline
-
-
 First, set some env variables. should work in zsh + bash
 
 ```
@@ -88,9 +85,6 @@ uvx hf download \
 Should automatically put the GGUF + projector into your chosen model directory.
 
 ### To start the llama server: 
-
-
-
 Option A — Run directly from HuggingFace (no local models)
 ```
 llama-server \
@@ -115,7 +109,6 @@ llama-server \
 ```
 
 ### Run the frontend (webcam + Three.js room) and backend streaming pipeline
-
 From the repo root:
 
 ```

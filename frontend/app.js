@@ -107,7 +107,9 @@ function renderRules() {
       '<p class="status-msg">No rules yet. Add one above.</p>';
   } else {
     rules.forEach((rule) => {
-      const action = ACTIONS.find((a) => a.id === rule.action_id || a.id === rule.actionId);
+      const action = ACTIONS.find(
+        (a) => a.id === rule.action_id || a.id === rule.actionId
+      );
 
       const item = document.createElement("div");
       item.className = "rule-item";
@@ -115,7 +117,9 @@ function renderRules() {
       const textDiv = document.createElement("div");
       textDiv.className = "rule-text";
       const actionLabel = action?.label ?? rule.action_id ?? rule.actionId;
-      textDiv.textContent = `IF "${rule.condition_text || rule.conditionText}" THEN ${actionLabel}`;
+      textDiv.textContent = `IF "${
+        rule.condition_text || rule.conditionText
+      }" THEN ${actionLabel}`;
       item.appendChild(textDiv);
 
       const actionsDiv = document.createElement("div");
@@ -159,6 +163,16 @@ function renderRules() {
   }
 }
 
+// ===== Stream restart helper when rules change =====
+
+function restartStreamIfActive() {
+  if (eventSource) {
+    // This stops SSE + capture, then reopens both.
+    stopStream();
+    startStream();
+  }
+}
+
 async function addRule(conditionText, actionId) {
   if (rules.length >= MAX_RULES) {
     return;
@@ -185,6 +199,9 @@ async function addRule(conditionText, actionId) {
     const newRule = await resp.json();
     rules.push(newRule);
     renderRules();
+
+    // 🔁 New: if stream is running, restart so VLM uses latest rules
+    restartStreamIfActive();
   } catch (err) {
     console.error("Error adding rule:", err);
     if (ruleErrorEl) {
@@ -204,6 +221,9 @@ async function deleteRule(id) {
     }
     rules = rules.filter((r) => r.id !== id);
     renderRules();
+
+    // 🔁 New: if stream is running, restart so VLM uses latest rules
+    restartStreamIfActive();
   } catch (err) {
     console.error("Error deleting rule:", err);
   }
@@ -302,7 +322,6 @@ function initThreeRoom() {
 
   // === Lighting: bright + readable ===
 
-  // Strong ambient feel
   const hemiLight = new THREE.HemisphereLight(0xf9fafb, 0x030712, 0.9);
   hemiLight.position.set(0, 4, 0);
   scene.add(hemiLight);
@@ -310,7 +329,6 @@ function initThreeRoom() {
   const ambient = new THREE.AmbientLight(0xffffff, 0.5);
   scene.add(ambient);
 
-  // Sunlight from window
   const sunLight = new THREE.DirectionalLight(0xffffff, 0.7);
   sunLight.position.set(-3, 5, -2);
   sunLight.target.position.set(0, 1.8, 0);
@@ -325,7 +343,6 @@ function initThreeRoom() {
   scene.add(sunLight);
   scene.add(sunLight.target);
 
-  // Ceiling fixture (main controllable light)
   const ceilingGroup = new THREE.Group();
   ceilingGroup.position.set(0, 3.9, -0.2);
   scene.add(ceilingGroup);
@@ -360,7 +377,6 @@ function initThreeRoom() {
   ceilingLight.shadow.mapSize.set(1024, 1024);
   ceilingGroup.add(ceilingLight);
 
-  // Decorative downlight “bulbs”
   const bulbs = [];
   const bulbGeom = new THREE.SphereGeometry(0.12, 16, 16);
   const bulbMatOff = new THREE.MeshStandardMaterial({
@@ -385,12 +401,9 @@ function initThreeRoom() {
   makeBulb(0, 0.3);
   makeBulb(1.8, 0.1);
 
-  // === Room geometry ===
-
   const roomGroup = new THREE.Group();
   scene.add(roomGroup);
 
-  // Floor
   const floorGeom = new THREE.PlaneGeometry(9, 7);
   const floorMat = new THREE.MeshStandardMaterial({
     color: 0x111827,
@@ -404,7 +417,6 @@ function initThreeRoom() {
   floor.receiveShadow = true;
   roomGroup.add(floor);
 
-  // Back wall
   const backWallGeom = new THREE.PlaneGeometry(9, 4.6);
   const backWallMat = new THREE.MeshStandardMaterial({
     color: 0x020617,
@@ -417,7 +429,6 @@ function initThreeRoom() {
   backWall.receiveShadow = true;
   roomGroup.add(backWall);
 
-  // Left wall
   const leftWallGeom = new THREE.PlaneGeometry(7, 4.6);
   const leftWallMat = new THREE.MeshStandardMaterial({
     color: 0x020617,
@@ -431,7 +442,6 @@ function initThreeRoom() {
   leftWall.receiveShadow = true;
   roomGroup.add(leftWall);
 
-  // Right wall
   const rightWallGeom = new THREE.PlaneGeometry(7, 4.6);
   const rightWallMat = new THREE.MeshStandardMaterial({
     color: 0x020617,
@@ -445,7 +455,6 @@ function initThreeRoom() {
   rightWall.receiveShadow = true;
   roomGroup.add(rightWall);
 
-  // Ceiling
   const ceilingGeom = new THREE.PlaneGeometry(9, 7);
   const ceilingMat = new THREE.MeshStandardMaterial({
     color: 0x020617,
@@ -464,7 +473,10 @@ function initThreeRoom() {
   const windowY = 2.5;
   const windowZ = -3.49;
 
-  const windowFrameGeom = new THREE.PlaneGeometry(windowWidth + 0.4, windowHeight + 0.4);
+  const windowFrameGeom = new THREE.PlaneGeometry(
+    windowWidth + 0.4,
+    windowHeight + 0.4
+  );
   const windowFrameMat = new THREE.MeshStandardMaterial({
     color: 0x020617,
     roughness: 0.7,
@@ -488,7 +500,6 @@ function initThreeRoom() {
   windowGlass.position.set(0, windowY, windowZ + 0.02);
   roomGroup.add(windowGlass);
 
-  // Mullions
   const mullionMat = new THREE.MeshStandardMaterial({
     color: 0x020617,
     roughness: 0.4,
@@ -510,7 +521,6 @@ function initThreeRoom() {
 
   // === Furniture (simple but shaded) ===
 
-  // Sofa
   const sofaGroup = new THREE.Group();
   sofaGroup.position.set(-2.3, 0, 0.4);
   roomGroup.add(sofaGroup);
@@ -538,7 +548,6 @@ function initThreeRoom() {
   sofaBack.castShadow = true;
   sofaGroup.add(sofaBack);
 
-  // Coffee table
   const tableGroup = new THREE.Group();
   tableGroup.position.set(0.1, 0, 0.25);
   roomGroup.add(tableGroup);
@@ -577,7 +586,6 @@ function initThreeRoom() {
   makeLeg(lx, -lz);
   makeLeg(-lx, -lz);
 
-  // Side table + lamp
   const sideTable = new THREE.Mesh(
     new THREE.CylinderGeometry(0.45, 0.45, 0.05, 18),
     new THREE.MeshStandardMaterial({
@@ -615,7 +623,7 @@ function initThreeRoom() {
   sideLampShade.castShadow = true;
   roomGroup.add(sideLampShade);
 
-  // === Curtains: simple, clean sliding panels ===
+  // === Curtains ===
 
   const curtainWidth = 1.9;
   const curtainHeight = 2.4;
@@ -657,7 +665,7 @@ function initThreeRoom() {
   const curtainRight = createCurtain("right");
 
   const curtainState = {
-    openAmount: curtainsOpen ? 1 : 0,        // 0 = closed, 1 = open
+    openAmount: curtainsOpen ? 1 : 0,
     targetOpenAmount: curtainsOpen ? 1 : 0,
   };
 
@@ -673,8 +681,6 @@ function initThreeRoom() {
     curtainRight.scale.x = scale;
   }
 
-  // === Store in global threeRoom ===
-
   threeRoom = {
     scene,
     camera,
@@ -687,7 +693,6 @@ function initThreeRoom() {
     updateCurtainsFromState,
   };
 
-  // === Resize handling ===
   window.addEventListener("resize", () => {
     if (!threeRoom) return;
     const w = roomCanvasContainer.clientWidth || 480;
@@ -697,7 +702,6 @@ function initThreeRoom() {
     threeRoom.camera.updateProjectionMatrix();
   });
 
-  // === Animation loop ===
   function animate() {
     requestAnimationFrame(animate);
 
@@ -705,8 +709,7 @@ function initThreeRoom() {
       const s = threeRoom.curtainState;
       const speed = 0.09;
       if (Math.abs(s.targetOpenAmount - s.openAmount) > 0.001) {
-        s.openAmount +=
-          (s.targetOpenAmount - s.openAmount) * speed;
+        s.openAmount += (s.targetOpenAmount - s.openAmount) * speed;
       }
       threeRoom.updateCurtainsFromState();
     }
@@ -717,15 +720,12 @@ function initThreeRoom() {
   animate();
 }
 
-  
-
 // Update Three.js room visuals based on lightsOn / curtainsOpen
 function updateRoomUI() {
   if (!threeRoom) return;
 
   const { mainLight, bulbs, curtainState } = threeRoom;
 
-  // Lights: bright and warm when ON, still well-lit when OFF
   if (lightsOn) {
     mainLight.intensity = 14.0;
 
@@ -736,7 +736,6 @@ function updateRoomUI() {
       b.material.needsUpdate = true;
     });
   } else {
-    // Still visible, just less punchy overhead light
     mainLight.intensity = 3.0;
 
     bulbs.forEach((b) => {
@@ -747,10 +746,8 @@ function updateRoomUI() {
     });
   }
 
-  // Curtains: just set the target; animation loop interpolates
   curtainState.targetOpenAmount = curtainsOpen ? 1 : 0;
 }
-  
 
 // ===== Action execution (binary semantics) =====
 
@@ -892,7 +889,6 @@ function startLiveCapture() {
     }).catch((err) => console.error("Failed to send live frame:", err));
   };
 
-  // Send one immediately, then at interval.
   sendFrame();
   captureIntervalId = setInterval(sendFrame, intervalMs);
 }
@@ -953,7 +949,6 @@ function appendStreamEntry(data) {
     block.appendChild(metaEl);
   }
 
-  // Add newest at the top
   streamLogEl.prepend(block);
 }
 
@@ -961,7 +956,6 @@ function handleModelActionsFromStream(data) {
   const { triggered_action_ids } = data;
   if (!Array.isArray(triggered_action_ids)) return;
 
-  // Deduplicate within a window
   const uniqueActions = [...new Set(triggered_action_ids)];
   uniqueActions.forEach((actionId) => {
     executeAction(actionId, "vlm-stream");
@@ -971,7 +965,6 @@ function handleModelActionsFromStream(data) {
 function startStream() {
   if (!startStreamBtn || !streamStatusEl) return;
 
-  // Close any existing stream
   if (eventSource) {
     eventSource.close();
     eventSource = null;
@@ -982,10 +975,8 @@ function startStream() {
   }
   streamStatusEl.textContent = "Starting live VLM stream…";
 
-  // Start sending webcam frames to backend
   startLiveCapture();
 
-  // Open SSE connection
   eventSource = new EventSource("/api/stream");
 
   eventSource.onmessage = (event) => {
@@ -1013,7 +1004,6 @@ function startStream() {
 function stopStream() {
   if (!stopStreamBtn || !streamStatusEl) return;
 
-  // Stop webcam frame uploads
   stopLiveCapture();
 
   if (eventSource) {
@@ -1043,7 +1033,6 @@ async function init() {
   initThreeRoom();
   initStreamControls();
 
-  // Fetch initial actions + rules from backend, then render UI
   await fetchInitialConfig();
   initActionsDropdown();
   renderRules();
